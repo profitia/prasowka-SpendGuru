@@ -56,10 +56,13 @@ def run_auto(
             "details": {},
         }
 
-    sequence_id = os.environ.get("APOLLO_SEQUENCE_ID", "").strip()
+    sequence_id_raw = os.environ.get("APOLLO_SEQUENCE_ID", "").strip()
 
     # Import tutaj (nie przy starcie modułu) — obsługuje ENV brak klucza
-    from .client import find_or_create_contact, add_contact_to_sequence
+    from .client import find_or_create_contact, add_contact_to_sequence, normalize_sequence_id
+
+    # Normalizacja: wyciągnij samo ID jeśli ENV zawiera pełny URL Apollo
+    sequence_id = normalize_sequence_id(sequence_id_raw) if sequence_id_raw else ""
 
     log.info(
         "run_auto start: email=%s company=%s tier=%s article=%s",
@@ -105,7 +108,7 @@ def run_auto(
             "details": {"email": email, "sequence_added": False},
         }
 
-    added = add_contact_to_sequence(contact_id, sequence_id)
+    added, diag = add_contact_to_sequence(contact_id, sequence_id)
 
     if added:
         log.info(
@@ -124,13 +127,24 @@ def run_auto(
             },
         }
     else:
+        log.error(
+            "run_auto sequence add FAILED: email=%s contact_id=%s sequence_id=%s | %s",
+            email, contact_id, sequence_id, diag,
+        )
         return {
             "ok": False,
             "contact_id": contact_id,
             "sequence_id": sequence_id,
             "message": (
-                f"Kontakt zaimportowany (id: {contact_id}), "
-                f"ale nie udało się dodać do sekwencji {sequence_id}. Sprawdź logi."
+                f"Kontakt utworzony w Apollo (id: {contact_id}), "
+                f"ale sequence add failed [{diag}]. "
+                f"Sprawdź logi Render i APOLLO_SEQUENCE_ID."
             ),
-            "details": {"email": email, "sequence_added": False},
+            "details": {
+                "email": email,
+                "sequence_added": False,
+                "sequence_add_error": diag,
+                "contact_id": contact_id,
+                "sequence_id": sequence_id,
+            },
         }

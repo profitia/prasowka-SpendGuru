@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import requests
@@ -33,6 +34,23 @@ def _headers() -> dict[str, str]:
         "Cache-Control": "no-cache",
         "X-Api-Key": _get_api_key(),
     }
+
+
+def normalize_sequence_id(raw: str) -> str:
+    """
+    Normalizuje wartość APOLLO_SEQUENCE_ID.
+    Jeśli raw to pełny URL Apollo (np. https://app.apollo.io/#/sequences/<ID>),
+    wyciąga samo ID. Jeśli to już samo ID, zwraca bez zmian.
+    """
+    raw = raw.strip()
+    # Dopasuj /sequences/<id> lub /sequences/<id>/<cokolwiek>
+    m = re.search(r'/sequences/([a-f0-9]{24})', raw, re.IGNORECASE)
+    if m:
+        extracted = m.group(1)
+        log.info("normalize_sequence_id: wyciągnięto ID z URL: %s -> %s", raw, extracted)
+        return extracted
+    # Załóż że raw to już samo ID
+    return raw
 
 
 def _post(endpoint: str, payload: dict | None = None) -> dict:
@@ -114,27 +132,77 @@ def find_or_create_contact(
 # Sequence operations
 # ---------------------------------------------------------------------------
 
-def add_contact_to_sequence(contact_id: str, sequence_id: str) -> bool:
+class SequenceAddError(Exception):
+    """Raised when add_contact_to_sequence fails; carries diagnostic details."""
+    def __init__(self, message: str, status_code: int = 0, response_body: str = ""):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_body = response_body
+
+
+def add_contact_to_sequence(contact_id: str, sequence_id: str) -> tuple[bool, str]:
     """
     Dodaje kontakt do sekwencji (emailer_campaign) w Apollo.
-    Zwraca True jeśli sukces.
+
+    Payload zgodny z działającym klientem:
+      - emailer_campaign_id: wymagane przez Apollo (oprócz ID w URL)
+      - sequence_active_in_other_campaigns: True  (bypass jeśli aktywny gdzie indziej)
+      - sequence_finished_in_other_campaigns: True (bypass jeśli skończony gdzie indziej)
+
+    Returns:
+      (True, "") jeśli sukces
+      (False, diagnostic_message) jeśli błąd
     """
+    endpoint = f"emailer_campaigns/{sequence_id}/add_contact_ids"
+    url = f"{APOLLO_BASE_URL}/{endpoint}"
+    payload = {
+        "contact_ids": [contact_id],
+        "emailer_campaign_id": sequence_id,
+        "sequence_active_in_other_campaigns": True,
+        "sequence_finished_in_other_campaigns": True,
+    }
+
+    log.info(
+        "[SEQUENCE ADD] endpoint=%s contact_id=%s sequence_id=%s payload=%s",
+        url, contact_id, sequence_id, payload,
+    )
+
     try:
-        data = _post(
-            f"emailer_campaigns/{sequence_id}/add_contact_ids",
-            {"contact_ids": [contact_id], "send_email_from_email_account_id": None},
-        )
+        resp = requests.post(url, json=payload, headers=_headers(), timeout=30)
+        status_code = resp.status_code
+        try:
+            resp_body = resp.json()
+            resp_body_str = str(resp_body)[:600]
+        except Exception:
+            resp_body = None
+            resp_body_str = resp.text[:600]
+
         log.info(
-            "Dodano kontakt %s do sekwencji %s: %s",
-            contact_id, sequence_id, data,
+            "[SEQUENCE ADD] HTTP %d | sequence_id=%s contact_id=%s | response: %s",
+            status_code, sequence_id, contact_id, resp_body_str,
         )
-        return True
-    except requests.HTTPError as exc:
+
+        if not resp.ok:
+            diag = f"HTTP {status_code} | {resp_body_str}"
+            log.error(
+                "[SEQUENCE ADD] FAILED: contact_id=%s sequence_id=%s | %s",
+                contact_id, sequence_id, diag,
+            )
+            return False, diag
+
+        log.info(
+            "[SEQUENCE ADD] OK: contact_id=%s sequence_id=%s",
+            contact_id, sequence_id,
+        )
+        return True, ""
+
+    except requests.RequestException as exc:
+        diag = f"Request error: {exc}"
         log.error(
-            "Nie udało się dodać kontaktu %s do sekwencji %s: %s",
-            contact_id, sequence_id, exc,
+            "[SEQUENCE ADD] exception: contact_id=%s sequence_id=%s | %s",
+            contact_id, sequence_id, diag,
         )
-        return False
+        return False, diag
 
 
 def list_sequences() -> list[dict]:
