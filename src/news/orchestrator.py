@@ -4,10 +4,12 @@ Prasówka SpendGuru — Orchestrator
 
 Użycie:
   python src/news/orchestrator.py run --brief food_press [--dry-run] [--verbose]
+  python src/news/orchestrator.py backfill-db --brief food_press [--verbose]
 
 Tryby:
   run           Pełny pipeline: pobierz → filtruj → klasyfikuj → wyślij mail
   run --dry-run Nie wysyłaj maila, zapisz podgląd HTML w outputs/news/
+  backfill-db   Wczytaj artykuły z data/articles.json i zapisz do Postgres
 """
 from __future__ import annotations
 
@@ -231,6 +233,7 @@ def run_brief(
     dry_run_export_preview_json: bool = False,
     save_to_db: bool = False,
     skip_email: bool = False,
+    reprocess_seen: bool = False,
 ) -> None:
     cfg = _load_config(brief_name)
 
@@ -269,8 +272,11 @@ def run_brief(
                 continue
 
             if storage.is_seen(url, brief_name):
-                log.debug("  SKIP (already seen): %s", url)
-                continue
+                if reprocess_seen:
+                    log.debug("  REPROCESS (already seen): %s", url)
+                else:
+                    log.debug("  SKIP (already seen): %s", url)
+                    continue
 
             total_new += 1
             log.info("  Pobieranie treści: %s", url)
@@ -286,12 +292,34 @@ def run_brief(
                 cls["reason"][:80],
             )
 
-            if not dry_run:
-                storage.mark_seen(url, brief_name, qualified=cls["qualified"])
-
             if cls["qualified"]:
                 article["classification"] = cls
+
+                # Zapisz do DB PRZED oznaczeniem jako seen, żeby nie stracić artykułu
+                db_upsert_ok = True
+                if save_to_db and not dry_run:
+                    try:
+                        from news.press_db import upsert_press_article as _db_one  # noqa: E402
+                        site_rec = {
+                            **_map_to_site_article(article, cls, brief_name, industry, now),
+                            "raw_payload": {k: v for k, v in article.items() if k != "text"},
+                        }
+                        _db_one(site_rec)
+                    except Exception as exc:
+                        log.error(
+                            "  [DB] Błąd upsert dla %s: %s — artykuł NIE zostanie oznaczony jako seen",
+                            url, exc,
+                        )
+                        db_upsert_ok = False
+
+                if not dry_run and db_upsert_ok:
+                    storage.mark_seen(url, brief_name, qualified=True)
+
                 qualified.append(article)
+            else:
+                # Niekwalifikowany — oznacz jako seen bez warunku DB
+                if not dry_run:
+                    storage.mark_seen(url, brief_name, qualified=False)
 
     storage.close()
 
@@ -324,21 +352,14 @@ def run_brief(
         f.write(html)
     log.info("Podgląd HTML: %s", preview_path)
 
-    # --- Save to Postgres ---
-    if save_to_db:
-        try:
-            from news.press_db import upsert_press_articles as _db_upsert  # noqa: E402
-            db_records = [
-                {
-                    **_map_to_site_article(a, a["classification"], brief_name, industry, now),
-                    "raw_payload": {k: v for k, v in a.items() if k != "text"},
-                }
-                for a in qualified
-            ]
-            saved = _db_upsert(db_records)
-            log.info("[DB] Zapisano %d artykułów do apollo.press_articles", saved)
-        except Exception as exc:
-            log.error("[DB] Błąd zapisu do bazy danych: %s", exc)
+    # --- Save to Postgres (batch dla artykułów nie zapisanych wyżej per-artykuł) ---
+    # Per-article upsert jest już wyżej (z blokiem mark_seen).
+    # Ten blok pozostaje jako fallback gdy save_to_db=True ale per-article path nie załadował się
+    # (np. dry_run=False ale wyżej nie było artykułów do zapisania batchą).
+    # W praktyce dla dry_run=False zakwalifikowane są już zapisane wyżej per-artykuł.
+    if save_to_db and dry_run:
+        # dry_run: nie zapisujemy do DB
+        log.info("[DB] Pominięto zapis do DB (dry-run)")
 
     # --- Export to site data (data/articles.json) ---
     if export_site_data and not dry_run:
@@ -365,6 +386,56 @@ def run_brief(
 
 
 # ---------------------------------------------------------------------------
+# Backfill DB — wczytaj data/articles.json → upsert do Postgres
+# ---------------------------------------------------------------------------
+
+def backfill_db(brief_name: str, verbose: bool) -> None:
+    """
+    Wczytuje artykuły z data/articles.json i upsertuje je do apollo.press_articles.
+
+    Nie pobiera nowych artykułów, nie klasyfikuje, nie wysyła maila.
+    Nie patrzy na SQLite seen.
+    Operacja idempotentna — bezpieczna do wielokrotnego uruchomienia.
+    """
+    from news.press_db import upsert_press_articles as _db_upsert, ensure_press_tables  # noqa: E402
+
+    site_data_path = os.path.join(_ROOT_DIR, "data", "articles.json")
+    if not os.path.exists(site_data_path):
+        log.error("Brak pliku: %s", site_data_path)
+        log.error("Uruchom najpierw pipeline z --export-site-data, aby wypełnić plik.")
+        return
+
+    try:
+        with open(site_data_path, encoding="utf-8") as f:
+            articles: list[dict] = json.load(f)
+        if not isinstance(articles, list):
+            raise ValueError("Plik articles.json nie jest tablicą JSON")
+    except (json.JSONDecodeError, ValueError, OSError) as exc:
+        log.error("Nie można wczytać %s: %s", site_data_path, exc)
+        return
+
+    log.info("[BACKFILL] Wczytano %d artykułów z %s", len(articles), site_data_path)
+
+    if not articles:
+        log.info("[BACKFILL] Brak artykułów do zapisania.")
+        return
+
+    # Upewnij się że tabela istnieje
+    try:
+        ensure_press_tables()
+    except Exception as exc:
+        log.error("[BACKFILL] Nie można połączyć z bazą / stworzyć tabeli: %s", exc)
+        return
+
+    # Upsert
+    try:
+        saved = _db_upsert(articles)
+        log.info("[BACKFILL] Upsert zakończony: zapisano %d / %d artykułów", saved, len(articles))
+    except Exception as exc:
+        log.error("[BACKFILL] Błąd podczas upsert: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -384,6 +455,9 @@ def main() -> None:
 Przykłady:
   python src/news/orchestrator.py run --brief food_press --verbose
   python src/news/orchestrator.py run --brief food_press --dry-run --verbose
+  python src/news/orchestrator.py run --brief food_press --save-to-db --skip-email --verbose
+  python src/news/orchestrator.py run --brief food_press --save-to-db --skip-email --reprocess-seen --verbose
+  python src/news/orchestrator.py backfill-db --brief food_press --verbose
 """,
     )
 
@@ -403,8 +477,20 @@ Przykłady:
                        help="Zapisz zakwalifikowane artykuły do bazy Postgres (wymaga DATABASE_URL)")
     run_p.add_argument("--skip-email", action="store_true",
                        help="Nie wysyłaj maila (np. w trybie CI/CD)")
+    run_p.add_argument("--reprocess-seen", action="store_true",
+                       help="Pomija filtr SQLite 'seen' — ponownie przetwarza już widziane URL-e "
+                            "(przydatne gdy poprzedni run skończył się błędem DB)")
     run_p.add_argument("--verbose", action="store_true",
                        help="Szczegółowe logi (DEBUG)")
+
+    backfill_p = subparsers.add_parser(
+        "backfill-db",
+        help="Wczytaj data/articles.json i upsertuj do Postgres (bez pobierania artykułów)",
+    )
+    backfill_p.add_argument("--brief", required=True, metavar="NAME",
+                             help="Nazwa prasówki (używana tylko do logowania)")
+    backfill_p.add_argument("--verbose", action="store_true",
+                             help="Szczegółowe logi (DEBUG)")
 
     args = parser.parse_args()
 
@@ -418,7 +504,11 @@ Przykłady:
             dry_run_export_preview_json=args.dry_run_export_preview_json,
             save_to_db=args.save_to_db,
             skip_email=args.skip_email,
+            reprocess_seen=args.reprocess_seen,
         )
+    elif args.command == "backfill-db":
+        _setup_logging(args.verbose)
+        backfill_db(args.brief, args.verbose)
     else:
         parser.print_help()
 

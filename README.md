@@ -100,6 +100,70 @@ python src/news/orchestrator.py run --brief industrial --export-site-data --verb
 
 ---
 
+## Konfiguracja bazy danych (Postgres/Neon)
+
+### Plik .env
+
+Stwórz plik `.env` w folderze `Prasówki SpendGuru/`:
+
+```bash
+# .env — NIE commituj tego pliku (jest w .gitignore)
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/neondb?sslmode=require&channel_binding=require"
+```
+
+Przykład dla Neon:
+```
+DATABASE_URL="postgresql://tomasz:abc123@ep-cool-name-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+```
+
+> **Uwaga:** Cudzysłowy wokół wartości są opcjonalne, ale zalecane gdy connection string zawiera `&`. Plik `.env` jest wczytywany przez `set -a; source .env; set +a` lub przez `python-dotenv`.
+
+### Wczytanie .env lokalnie
+
+```bash
+cd "/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie Apollo/Prasówki SpendGuru"
+source ../.venv/bin/activate
+set -a; source .env; set +a
+
+# Test połączenia
+python -c "from src.news.press_db import ensure_press_tables; ensure_press_tables(); print('OK')"
+```
+
+### Backfill — zapisz istniejące artykuły do DB
+
+Jeśli masz już artykuły w `data/articles.json` i chcesz je załadować do bazy:
+
+```bash
+python src/news/orchestrator.py backfill-db --brief food_press --verbose
+```
+
+Operacja idempotentna — bezpieczna do wielokrotnego uruchomienia. Nie duplikuje artykułów.
+
+### Odzyskiwanie po błędzie DATABASE_URL
+
+Jeśli poprzedni run skończył się błędem DB (artykuły nie trafiły do bazy, ale SQLite je "widział"):
+
+```bash
+# Opcja 1: backfill z articles.json (jeśli --export-site-data był użyty)
+python src/news/orchestrator.py backfill-db --brief food_press --verbose
+
+# Opcja 2: ponowne pobranie i zapis z pominięciem filtra "seen"
+python src/news/orchestrator.py run \
+  --brief food_press \
+  --save-to-db --skip-email --reprocess-seen --verbose
+```
+
+### GitHub Actions — sekret DATABASE_URL
+
+Dodaj sekret w repozytorium:
+`Settings → Secrets and variables → Actions → New repository secret`
+
+| Nazwa | Wartość |
+|-------|---------|
+| `DATABASE_URL` | `postgresql://USER:PASS@HOST/neondb?sslmode=require&channel_binding=require` |
+
+---
+
 ## Uruchamianie ręczne
 
 Wszystkie komendy uruchamiane z katalogu **`Prasówki SpendGuru/`**:

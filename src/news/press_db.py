@@ -139,10 +139,37 @@ ORDER BY article_date DESC NULLS LAST, created_at DESC
 # Connection
 # ---------------------------------------------------------------------------
 
+def _sanitize_db_url(raw: str) -> str:
+    """
+    Czyści DATABASE_URL z typowych problemów przy wczytaniu z pliku .env:
+    - usuwa otaczające cudzysłowy (pojedyncze lub podwójne)
+    - przycina białe znaki
+    Nie modyfikuje wartości gdy jest poprawna.
+    """
+    url = raw.strip()
+    if len(url) >= 2 and url[0] in ('"', "'") and url[-1] == url[0]:
+        url = url[1:-1].strip()
+    return url
+
+
+def _log_db_host(url: str) -> None:
+    """Loguje host bazy bez hasła (bezpiecznie)."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        safe = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
+        if parsed.port:
+            safe = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}{parsed.path}"
+        log.info("[DB] Łączenie z: %s", safe)
+    except Exception:
+        log.info("[DB] Łączenie z bazą danych...")
+
+
 def get_connection():
     """
     Zwraca połączenie psycopg (v3).
     Wymaga DATABASE_URL w zmiennych środowiskowych.
+    Obsługuje otaczające cudzysłowy i znak & w connection stringu.
     """
     try:
         import psycopg  # type: ignore
@@ -151,13 +178,30 @@ def get_connection():
             "Brak modułu psycopg. Zainstaluj: pip install 'psycopg[binary]'"
         ) from exc
 
-    url = os.environ.get("DATABASE_URL")
-    if not url:
+    raw_url = os.environ.get("DATABASE_URL", "")
+    if not raw_url or not raw_url.strip():
         raise EnvironmentError(
-            "Brak zmiennej środowiskowej DATABASE_URL. "
-            "Ustaw ją lub dodaj do .env przed uruchomieniem."
+            "Brak zmiennej środowiskowej DATABASE_URL.\n"
+            "Ustaw ją w pliku .env lub eksportuj przed uruchomieniem:\n"
+            '  DATABASE_URL="postgresql://USER:PASS@HOST/neondb?sslmode=require"'
         )
-    return psycopg.connect(url)
+
+    url = _sanitize_db_url(raw_url)
+    if not url.startswith(("postgresql://", "postgres://")):
+        raise EnvironmentError(
+            f"DATABASE_URL ma nieprawidłowy format (musi zaczynać się od "
+            f"'postgresql://' lub 'postgres://').\n"
+            f"Aktualna wartość zaczyna się od: {url[:40]!r}"
+        )
+
+    _log_db_host(url)
+    try:
+        return psycopg.connect(url)
+    except Exception as exc:
+        raise ConnectionError(
+            f"Nie można połączyć się z bazą danych: {exc}\n"
+            f"Sprawdź DATABASE_URL i dostępność serwera."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
