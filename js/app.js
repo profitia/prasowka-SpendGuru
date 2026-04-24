@@ -386,15 +386,10 @@ function renderCommandSection(articleId, tier, email, article) {
                 ${hasEmail ? '' : 'disabled'}>
           Kopiuj komendę Apollo
         </button>
-        ${hasEmail ? `
-        <button class="btn-mark-sent"
-                data-article-id="${escAttr(articleId)}"
-                data-tier="${tier}">
-          Oznacz jako wysłany
-        </button>` : ''}
       </div>
       ${hasEmail
-        ? `<button class="btn-cmd-toggle"
+        ? `<span class="cmd-hint cmd-hint--info">Kliknięcie kopiuje komendę i oznacza kontakt jako wysłany.</span>
+           <button class="btn-cmd-toggle"
                    data-preview-id="${escAttr(previewId)}">▸ Pokaż komendę</button>`
         : `<span class="cmd-hint">Zapisz email, aby skopiować komendę</span>`}
       <span class="copy-confirm" id="${confirmId}" aria-live="polite"></span>
@@ -461,7 +456,7 @@ function renderPersonBlock(article, tier) {
           <input type="checkbox" class="apollo-checkbox"
                  data-article-id="${escAttr(article.id)}"
                  data-tier="${tier}"
-                 ${isChecked}>
+                 ${isChecked} disabled>
           Wysłany do Apollo
         </label>
         <span class="apollo-confirm" id="apollo_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
@@ -664,45 +659,16 @@ function handleCmdToggle(e) {
   }
 }
 
-function handleMarkSent(e) {
-  const btn = e.target.closest('.btn-mark-sent');
-  if (!btn) return;
-
-  const articleId = btn.dataset.articleId;
-  const tier      = parseInt(btn.dataset.tier, 10);
-  const article   = allArticles.find(a => a.id === articleId);
-  if (!article) return;
-
+function _markSentInUI(articleId, tier, article) {
   saveContact(articleId, tier, article, getContact(articleId, tier)?.email ?? '', 'sent');
 
-  // Sync checkbox
   const cbEl = document.querySelector(`.apollo-checkbox[data-article-id="${articleId}"][data-tier="${tier}"]`);
   if (cbEl) cbEl.checked = true;
 
-  // Update badge
   const badgeEl = document.getElementById(`status_badge_${articleId}_t${tier}`);
   if (badgeEl) {
     badgeEl.textContent = statusLabel('sent');
     badgeEl.className   = 'apollo-badge apollo-badge--sent';
-  }
-
-  const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
-
-  if (apiAvailable && API_BASE_URL && article.source_url) {
-    postToApi('/api/articles/status', {
-      article_url:   article.source_url,
-      apollo_status: 'sent',
-    }).then(({ ok }) => {
-      if (confirmEl) {
-        confirmEl.textContent = ok ? 'Oznaczono jako wysłany ✔' : 'Status zaktualizowany';
-        setTimeout(() => { confirmEl.textContent = ''; }, 2500);
-      }
-    });
-  } else {
-    if (confirmEl) {
-      confirmEl.textContent = 'Oznaczono jako wysłany';
-      setTimeout(() => { confirmEl.textContent = ''; }, 2500);
-    }
   }
 }
 
@@ -712,33 +678,65 @@ function handleCopyClick(e) {
 
   const articleId = btn.dataset.articleId;
   const tier      = parseInt(btn.dataset.tier, 10);
+  const article   = allArticles.find(a => a.id === articleId);
   const cmdEl     = document.getElementById(`cmd_${articleId}_t${tier}`);
   const code      = cmdEl?.querySelector('code');
-  if (!code) return;
+  if (!code || !article) return;
 
-  navigator.clipboard.writeText(code.textContent).then(() => {
-    const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
-    if (confirmEl) {
-      confirmEl.textContent = 'Skopiowano komendę ✔';
-      setTimeout(() => { confirmEl.textContent = ''; }, 2000);
-    }
-  }).catch(() => {
-    // Fallback for older browsers
-    const ta = document.createElement('textarea');
-    ta.value = code.textContent;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
+  const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
 
-    const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
-    if (confirmEl) {
-      confirmEl.textContent = 'Skopiowano komendę ✔';
-      setTimeout(() => { confirmEl.textContent = ''; }, 2000);
+  function doMarkSent() {
+    _markSentInUI(articleId, tier, article);
+
+    if (apiAvailable && API_BASE_URL && article.source_url) {
+      postToApi('/api/articles/status', {
+        article_url:   article.source_url,
+        apollo_status: 'sent',
+      }).then(({ ok }) => {
+        if (confirmEl) {
+          confirmEl.textContent = ok
+            ? 'Skopiowano i oznaczono jako wysłany ✔'
+            : 'Skopiowano komendę, ale nie udało się oznaczyć jako wysłany';
+          setTimeout(() => { confirmEl.textContent = ''; }, 3500);
+        }
+      });
+    } else {
+      if (confirmEl) {
+        confirmEl.textContent = 'Skopiowano i oznaczono lokalnie jako wysłany ✔';
+        setTimeout(() => { confirmEl.textContent = ''; }, 3000);
+      }
     }
-  });
+  }
+
+  // Try modern clipboard API first
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(code.textContent).then(() => {
+      doMarkSent();
+    }).catch(() => {
+      if (confirmEl) {
+        confirmEl.textContent = 'Błąd kopiowania — spróbuj ręcznie';
+        setTimeout(() => { confirmEl.textContent = ''; }, 3000);
+      }
+    });
+  } else {
+    // Fallback execCommand
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = code.textContent;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      doMarkSent();
+    } catch {
+      if (confirmEl) {
+        confirmEl.textContent = 'Błąd kopiowania — spróbuj ręcznie';
+        setTimeout(() => { confirmEl.textContent = ''; }, 3000);
+      }
+    }
+  }
 }
 
 // ============================================================
@@ -884,7 +882,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event delegation on cards grid
   const cardsEl = document.getElementById('cards');
-  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleMarkSent(e); });
+  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); });
   cardsEl.addEventListener('change', handleApolloCheckbox);
 
   // Event delegation on pagination
