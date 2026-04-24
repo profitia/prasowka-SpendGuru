@@ -33,38 +33,50 @@ _CREATE_TABLE_SQL = """
 CREATE SCHEMA IF NOT EXISTS apollo;
 
 CREATE TABLE IF NOT EXISTS apollo.press_articles (
-    id              BIGSERIAL PRIMARY KEY,
-    article_id      TEXT NOT NULL,
-    article_url     TEXT NOT NULL UNIQUE,
-    article_title   TEXT,
-    article_date    DATE,
-    source_name     TEXT,
-    company_name    TEXT,
-    industry        TEXT,
-    press_type      TEXT,
-    tier1_person    TEXT,
-    tier1_position  TEXT,
-    tier1_email     TEXT,
-    tier2_person    TEXT,
-    tier2_position  TEXT,
-    tier2_email     TEXT,
-    reason          TEXT,
-    context         TEXT,
-    apollo_status   TEXT NOT NULL DEFAULT 'waiting',
-    raw_payload     JSONB,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                   BIGSERIAL PRIMARY KEY,
+    article_id           TEXT NOT NULL,
+    article_url          TEXT NOT NULL UNIQUE,
+    article_title        TEXT,
+    article_date         DATE,
+    source_name          TEXT,
+    company_name         TEXT,
+    industry             TEXT,
+    press_type           TEXT,
+    tier1_person         TEXT,
+    tier1_position       TEXT,
+    tier1_email          TEXT,
+    tier2_person         TEXT,
+    tier2_position       TEXT,
+    tier2_email          TEXT,
+    reason               TEXT,
+    context              TEXT,
+    apollo_status        TEXT NOT NULL DEFAULT 'waiting',
+    raw_payload          JSONB,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    data_quality_status  TEXT NOT NULL DEFAULT 'unknown',
+    data_quality_notes   TEXT,
+    reviewed_at          TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS press_articles_article_url_idx   ON apollo.press_articles (article_url);
-CREATE INDEX IF NOT EXISTS press_articles_company_name_idx  ON apollo.press_articles (company_name);
-CREATE INDEX IF NOT EXISTS press_articles_source_name_idx   ON apollo.press_articles (source_name);
-CREATE INDEX IF NOT EXISTS press_articles_industry_idx      ON apollo.press_articles (industry);
-CREATE INDEX IF NOT EXISTS press_articles_press_type_idx    ON apollo.press_articles (press_type);
-CREATE INDEX IF NOT EXISTS press_articles_tier1_person_idx  ON apollo.press_articles (tier1_person);
-CREATE INDEX IF NOT EXISTS press_articles_tier2_person_idx  ON apollo.press_articles (tier2_person);
-CREATE INDEX IF NOT EXISTS press_articles_apollo_status_idx ON apollo.press_articles (apollo_status);
-CREATE INDEX IF NOT EXISTS press_articles_article_date_idx  ON apollo.press_articles (article_date);
+-- Idempotent migrations for existing tables (safe to run multiple times)
+ALTER TABLE apollo.press_articles
+    ADD COLUMN IF NOT EXISTS data_quality_status TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE apollo.press_articles
+    ADD COLUMN IF NOT EXISTS data_quality_notes TEXT;
+ALTER TABLE apollo.press_articles
+    ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS press_articles_article_url_idx    ON apollo.press_articles (article_url);
+CREATE INDEX IF NOT EXISTS press_articles_company_name_idx   ON apollo.press_articles (company_name);
+CREATE INDEX IF NOT EXISTS press_articles_source_name_idx    ON apollo.press_articles (source_name);
+CREATE INDEX IF NOT EXISTS press_articles_industry_idx       ON apollo.press_articles (industry);
+CREATE INDEX IF NOT EXISTS press_articles_press_type_idx     ON apollo.press_articles (press_type);
+CREATE INDEX IF NOT EXISTS press_articles_tier1_person_idx   ON apollo.press_articles (tier1_person);
+CREATE INDEX IF NOT EXISTS press_articles_tier2_person_idx   ON apollo.press_articles (tier2_person);
+CREATE INDEX IF NOT EXISTS press_articles_apollo_status_idx  ON apollo.press_articles (apollo_status);
+CREATE INDEX IF NOT EXISTS press_articles_article_date_idx   ON apollo.press_articles (article_date);
+CREATE INDEX IF NOT EXISTS press_articles_data_quality_idx   ON apollo.press_articles (data_quality_status);
 """
 
 # Upsert: ON CONFLICT (article_url)
@@ -76,13 +88,15 @@ INSERT INTO apollo.press_articles (
     source_name, company_name, industry, press_type,
     tier1_person, tier1_position,
     tier2_person, tier2_position,
-    reason, context, raw_payload
+    reason, context, raw_payload,
+    data_quality_status
 ) VALUES (
     %(article_id)s, %(article_url)s, %(article_title)s, %(article_date)s,
     %(source_name)s, %(company_name)s, %(industry)s, %(press_type)s,
     %(tier1_person)s, %(tier1_position)s,
     %(tier2_person)s, %(tier2_position)s,
-    %(reason)s, %(context)s, %(raw_payload)s
+    %(reason)s, %(context)s, %(raw_payload)s,
+    %(data_quality_status)s
 )
 ON CONFLICT (article_url) DO UPDATE SET
     article_id     = EXCLUDED.article_id,
@@ -116,6 +130,13 @@ ON CONFLICT (article_url) DO UPDATE SET
         THEN apollo.press_articles.apollo_status
         ELSE 'waiting'
     END,
+    -- Zachowaj data_quality_status jeśli już recenzowany (ok/rejected),
+    -- w przeciwnym razie ustaw na 'unknown' (nowe dane z pipeline)
+    data_quality_status = CASE
+        WHEN apollo.press_articles.data_quality_status IN ('ok', 'rejected')
+        THEN apollo.press_articles.data_quality_status
+        ELSE 'unknown'
+    END,
     updated_at = now()
 """
 
@@ -129,8 +150,11 @@ SELECT
     article_date, source_name, company_name, industry,
     press_type, tier1_person, tier1_position, tier1_email,
     tier2_person, tier2_position, tier2_email,
-    reason, context, apollo_status, created_at, updated_at
+    reason, context, apollo_status, created_at, updated_at,
+    COALESCE(data_quality_status, 'unknown') AS data_quality_status,
+    data_quality_notes
 FROM apollo.press_articles
+WHERE COALESCE(data_quality_status, 'unknown') <> 'rejected'
 ORDER BY article_date DESC NULLS LAST, created_at DESC
 """
 
@@ -268,9 +292,10 @@ def _to_db_row(article: dict) -> dict:
         "tier1_position": article.get("tier1_position") or None,
         "tier2_person":  article.get("tier2_person") or None,
         "tier2_position": article.get("tier2_position") or None,
-        "reason":        article.get("reason") or None,
-        "context":       article.get("context") or None,
-        "raw_payload":   raw_json,
+        "reason":              article.get("reason") or None,
+        "context":             article.get("context") or None,
+        "raw_payload":         raw_json,
+        "data_quality_status": article.get("data_quality_status") or "unknown",
     }
 
 
@@ -374,10 +399,12 @@ def load_press_articles() -> list[dict]:
             "tier2_position": r["tier2_position"] or "",
             "tier2_email":    r["tier2_email"] or "",
             "reason":         r["reason"] or "",
-            "context":        r["context"] or "",
-            "apollo_status":  r["apollo_status"],
-            "created_at":     r["created_at"].isoformat() if r["created_at"] else "",
-            "updated_at":     r["updated_at"].isoformat() if r["updated_at"] else "",
+            "context":              r["context"] or "",
+            "apollo_status":        r["apollo_status"],
+            "data_quality_status":  r["data_quality_status"] or "unknown",
+            "data_quality_notes":   r["data_quality_notes"] or "",
+            "created_at":           r["created_at"].isoformat() if r["created_at"] else "",
+            "updated_at":           r["updated_at"].isoformat() if r["updated_at"] else "",
         })
     return result
 

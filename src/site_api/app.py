@@ -172,20 +172,40 @@ async def health() -> dict:
 
 
 @app.get("/api/articles")
-async def get_articles() -> list[dict]:
+async def get_articles(
+    quality: str = Query(
+        default="",
+        description="Filtruj po data_quality_status. Wartości: ok,unknown,needs_review,rejected. "
+                    "Można podać kilka po przecinku. Domyślnie: ok,unknown (bez rejected).",
+    ),
+) -> list[dict]:
     """
-    Zwraca wszystkie artykuły z apollo.press_articles.
+    Zwraca artykuły z apollo.press_articles.
     Format zgodny z data/articles.json, z dodatkowymi polami:
-      tier1_email, tier2_email, apollo_status, updated_at.
+      tier1_email, tier2_email, apollo_status, data_quality_status, updated_at.
+    Domyślnie pomija rekordy 'rejected' (chyba że explicite podano quality=rejected).
     """
     try:
-        return load_press_articles()
+        articles = load_press_articles()
     except (EnvironmentError, ConnectionError) as exc:
         log.error("Błąd DB w GET /api/articles: %s", exc)
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception:
         log.exception("Nieoczekiwany błąd w GET /api/articles")
         raise HTTPException(status_code=500, detail="Błąd serwera")
+
+    # Quality filter: domyślnie ok + unknown (bez rejected)
+    _allowed_statuses = {"ok", "unknown", "needs_review", "rejected"}
+    requested = {s.strip().lower() for s in quality.split(",") if s.strip()}
+    requested = requested & _allowed_statuses  # tylko znane statusy
+    if not requested:
+        requested = {"ok", "unknown"}
+
+    # Uwaga: _LOAD_SQL już filtruje rejected — tu dodatkowo uwzględniamy
+    # wszystkie żądane statusy (w tym ewentualne needs_review)
+    filtered = [a for a in articles if (a.get("data_quality_status") or "unknown") in requested]
+    log.debug("GET /api/articles: total=%d, quality=%s, returned=%d", len(articles), requested, len(filtered))
+    return filtered
 
 
 @app.post("/api/articles/contact")

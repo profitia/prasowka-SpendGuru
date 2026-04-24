@@ -205,7 +205,10 @@ async function loadArticles() {
   // 1. Try API
   if (API_BASE_URL) {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/articles`);
+      // Pobierz wszystkie rekordy łącznie z needs_review (nie rejected)
+      // aby umożliwić filtr jakości danych po stronie frontendu.
+      // Rekordy 'rejected' są pomijane przez _LOAD_SQL w backendzie.
+      const res = await fetch(`${API_BASE_URL}/api/articles?quality=ok,unknown,needs_review`);
       if (res.ok) {
         allArticles  = await res.json();
         apiAvailable = true;
@@ -273,6 +276,7 @@ function getFilters() {
     search:    document.getElementById('searchInput').value.trim().toLowerCase(),
     industry:  document.getElementById('filterIndustry').value,
     status:    [...document.querySelectorAll('[name="filterStatus"]:checked')].map(el => el.value),
+    quality:   [...document.querySelectorAll('[name="filterQuality"]:checked')].map(el => el.value),
     source:    document.getElementById('filterSource').value,
     company:   document.getElementById('filterCompany').value.trim().toLowerCase(),
     tier:      [...document.querySelectorAll('[name="filterTier"]:checked')].map(el => el.value),
@@ -294,6 +298,15 @@ function applyAndRender() {
   const f = getFilters();
 
   filteredArticles = allArticles.filter(a => {
+    // Quality filter (domyślnie ok + unknown; nie pokazuj rejected)
+    const artQuality = a.data_quality_status || 'unknown';
+    if (f.quality.length) {
+      if (!f.quality.includes(artQuality)) return false;
+    } else {
+      // Gdy żaden checkbox nie jest zaznaczony — pokaż ok + unknown
+      if (!['ok', 'unknown'].includes(artQuality)) return false;
+    }
+
     // Apollo status filter
     if (f.status.length) {
       const articleStatuses = getArticleApolloStatuses(a);
@@ -347,6 +360,10 @@ function resetFilters() {
   document.getElementById('filterDateTo').value = '';
   document.querySelectorAll('[name="filterStatus"]').forEach(cb => { cb.checked = false; });
   document.querySelectorAll('[name="filterTier"]').forEach(cb => { cb.checked = false; });
+  // Quality reset: tylko ok + unknown (domyślne)
+  document.querySelectorAll('[name="filterQuality"]').forEach(cb => {
+    cb.checked = cb.value === 'ok' || cb.value === 'unknown';
+  });
   document.getElementById('sortBy').value = 'date_desc';
   applyAndRender();
 }
@@ -553,11 +570,20 @@ function renderCard(article) {
   const tier1Html = renderPersonBlock(article, 1);
   const tier2Html = article.tier2_person ? renderPersonBlock(article, 2) : '';
 
+  // Quality badge (tylko gdy nie ok)
+  const dqs = article.data_quality_status || 'unknown';
+  const qualityBadge = dqs === 'needs_review'
+    ? `<span class="badge badge-quality badge-quality--warn" title="Do weryfikacji">⚠ Do weryfikacji</span>`
+    : dqs === 'rejected'
+    ? `<span class="badge badge-quality badge-quality--rejected" title="Odrzucony">✗ Odrzucony</span>`
+    : '';
+
   return `
 <article class="card" data-id="${escAttr(article.id)}">
   <div class="card-badges">
     ${article.industry ? `<span class="badge badge-industry">${escHtml(article.industry)}</span>` : ''}
     ${article.press_type ? `<span class="badge badge-press">${escHtml(article.press_type)}</span>` : ''}
+    ${qualityBadge}
   </div>
 
   <h2 class="card-title">
@@ -1120,8 +1146,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('filterDateFrom').addEventListener('change', applyAndRender);
   document.getElementById('filterDateTo').addEventListener('change', applyAndRender);
 
-  // Status & tier checkboxes — delegate on their containers
+  // Status & tier & quality checkboxes — delegate on their containers
   document.getElementById('filterStatus').addEventListener('change', applyAndRender);
+  document.getElementById('filterQuality').addEventListener('change', applyAndRender);
   document.querySelectorAll('[name="filterTier"]').forEach(cb =>
     cb.addEventListener('change', applyAndRender)
   );

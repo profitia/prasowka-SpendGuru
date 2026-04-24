@@ -546,6 +546,36 @@ a:hover { text-decoration: underline; }
   border-color: #3b1f6e;
 }
 
+/* Data quality badges */
+.badge-quality {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: .03em;
+  padding: 2px 7px;
+  border-radius: 99px;
+  border: 1px solid transparent;
+}
+.badge-quality--warn {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+[data-theme="dark"] .badge-quality--warn {
+  background: #1f1200;
+  color: #fbbf24;
+  border-color: #78350f;
+}
+.badge-quality--rejected {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+[data-theme="dark"] .badge-quality--rejected {
+  background: #1f0000;
+  color: #f87171;
+  border-color: #7f1d1d;
+}
+
 /* Card title */
 .card-title {
   font-size: 0.95rem;

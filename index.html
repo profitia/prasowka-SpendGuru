@@ -88,6 +88,24 @@
         </div>
 
         <div class="filter-group">
+          <label class="filter-label">Jakość danych</label>
+          <div id="filterQuality" class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterQuality" value="ok" checked> OK
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterQuality" value="unknown" checked> Nieznana
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterQuality" value="needs_review"> Do weryfikacji
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterQuality" value="rejected"> Odrzucone
+            </label>
+          </div>
+        </div>
+
+        <div class="filter-group">
           <label class="filter-label" for="filterSource">Źródło</label>
           <select id="filterSource" class="filter-select">
             <option value="">Wszystkie źródła</option>
