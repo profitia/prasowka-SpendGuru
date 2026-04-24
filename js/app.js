@@ -16,6 +16,9 @@ const WORKSPACE = '/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie A
 const VENV_ACTIVATE = 'source .venv/bin/activate';
 const ORCHESTRATOR = 'python src/news/orchestrator.py manual';
 
+// API backend URL (set in js/config.js; override with window.PRASOWKA_API_URL)
+const API_BASE_URL = (typeof window.PRASOWKA_API_URL !== 'undefined') ? window.PRASOWKA_API_URL : '';
+
 const TIER_VALUES = {
   1: 'tier_1_c_level',
   2: 'tier_2_procurement_management',
@@ -24,9 +27,10 @@ const TIER_VALUES = {
 // ============================================================
 // State
 // ============================================================
-let allArticles     = [];
+let allArticles      = [];
 let filteredArticles = [];
-let currentPage     = 1;
+let currentPage      = 1;
+let apiAvailable     = false;  // true gdy GET /api/articles zadziałało
 
 // ============================================================
 // Utilities
@@ -128,19 +132,64 @@ function applyTheme(isDark) {
 // Data loading
 // ============================================================
 
+/**
+ * Pre-populates localStorage contacts with data from DB (DB is source of truth).
+ * Called after successful API load. Overwrites only if DB has richer data.
+ */
+function syncDbContactsToLocalStorage() {
+  allArticles.forEach(article => {
+    [1, 2].forEach(tier => {
+      const hasPerson = tier === 1 ? !!article.tier1_person : !!article.tier2_person;
+      if (!hasPerson) return;
+
+      const dbEmail  = tier === 1 ? (article.tier1_email || '') : (article.tier2_email || '');
+      const dbStatus = article.apollo_status || 'Nie wysłany';
+      const existing = getContact(article.id, tier);
+
+      // Overwrite localStorage with DB values (DB wins)
+      const email = dbEmail || existing?.email || '';
+      saveContact(article.id, tier, article, email, dbStatus);
+    });
+  });
+}
+
 async function loadArticles() {
-  try {
-    const res = await fetch('data/articles.json');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    allArticles = await res.json();
-    buildFilterOptions();
-    applyAndRender();
-  } catch (err) {
-    document.getElementById('cards').innerHTML =
-      `<div class="empty-state"><p>Błąd ładowania artykułów: ${escHtml(err.message)}</p>
-       <p style="font-size:.8rem;opacity:.7">Upewnij się że serwer działa i plik data/articles.json istnieje.</p></div>`;
-    document.getElementById('resultsCount').textContent = 'Błąd';
+  let loaded = false;
+
+  // 1. Try API
+  if (API_BASE_URL) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/articles`);
+      if (res.ok) {
+        allArticles  = await res.json();
+        apiAvailable = true;
+        syncDbContactsToLocalStorage();
+        loaded = true;
+      } else {
+        console.warn('[API] GET /api/articles zwrócił HTTP', res.status, '— fallback na JSON');
+      }
+    } catch (err) {
+      console.info('[API] Niedostępne, używam fallback data/articles.json:', err.message);
+    }
   }
+
+  // 2. Fallback: static JSON
+  if (!loaded) {
+    try {
+      const res = await fetch('data/articles.json');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      allArticles = await res.json();
+    } catch (err) {
+      document.getElementById('cards').innerHTML =
+        `<div class="empty-state"><p>Błąd ładowania artykułów: ${escHtml(err.message)}</p>
+         <p style="font-size:.8rem;opacity:.7">Upewnij się że serwer działa i plik data/articles.json istnieje.</p></div>`;
+      document.getElementById('resultsCount').textContent = 'Błąd';
+      return;
+    }
+  }
+
+  buildFilterOptions();
+  applyAndRender();
 }
 
 // ============================================================
@@ -466,6 +515,25 @@ function renderCard(article) {
 // Email save + Apollo checkbox (event delegation on #cards)
 // ============================================================
 
+async function postToApi(path, body) {
+  try {
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const msg = await res.text().catch(() => res.statusText);
+      console.warn(`[API] POST ${path} zwracił HTTP ${res.status}:`, msg);
+      return { ok: false };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (err) {
+    console.warn(`[API] POST ${path} nie powiódł się:`, err.message);
+    return { ok: false };
+  }
+}
+
 function handleSaveEmail(e) {
   const btn = e.target.closest('.btn-save');
   if (!btn) return;
@@ -485,7 +553,7 @@ function handleSaveEmail(e) {
   }
   inputEl?.classList.remove('input-error');
 
-  // Save — preserve existing apollo_status
+  // Save to localStorage — preserve existing apollo_status
   const existing = getContact(articleId, tier);
   saveContact(articleId, tier, article, email, existing?.apollo_status ?? 'Nie wysłany');
 
@@ -493,11 +561,27 @@ function handleSaveEmail(e) {
   const cmdEl = document.getElementById(`cmd_${articleId}_t${tier}`);
   if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tier, email, article);
 
-  // Show confirmation
+  // Confirmation element
   const confirmEl = document.getElementById(`save_confirm_${articleId}_t${tier}`);
-  if (confirmEl) {
-    confirmEl.textContent = 'Zapisano email';
-    setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+
+  // POST to API (non-blocking)
+  if (apiAvailable && API_BASE_URL && article.source_url) {
+    const tierValue = TIER_VALUES[tier];
+    postToApi('/api/articles/contact', {
+      article_url: article.source_url,
+      tier: tierValue,
+      email,
+    }).then(({ ok }) => {
+      if (confirmEl) {
+        confirmEl.textContent = ok ? 'Zapisano w bazie ✔' : 'Zapisano lokalnie';
+        setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+      }
+    });
+  } else {
+    if (confirmEl) {
+      confirmEl.textContent = 'Zapisano lokalnie';
+      setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+    }
   }
 }
 
@@ -521,11 +605,25 @@ function handleApolloCheckbox(e) {
     badgeEl.className   = `apollo-badge ${apolloStatus === 'Wysłany' ? 'apollo-badge--sent' : 'apollo-badge--unsent'}`;
   }
 
-  // Show confirmation
+  // Confirmation element
   const confirmEl = document.getElementById(`apollo_confirm_${articleId}_t${tier}`);
-  if (confirmEl) {
-    confirmEl.textContent = 'Status zaktualizowany';
-    setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+
+  // POST to API (non-blocking)
+  if (apiAvailable && API_BASE_URL && article.source_url) {
+    postToApi('/api/articles/status', {
+      article_url:   article.source_url,
+      apollo_status: apolloStatus,
+    }).then(({ ok }) => {
+      if (confirmEl) {
+        confirmEl.textContent = ok ? 'Zapisano w bazie ✔' : 'Status zaktualizowany';
+        setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+      }
+    });
+  } else {
+    if (confirmEl) {
+      confirmEl.textContent = 'Status zaktualizowany';
+      setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+    }
   }
 }
 

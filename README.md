@@ -164,6 +164,58 @@ Dodaj sekret w repozytorium:
 
 ---
 
+## API Backend (FastAPI)
+
+Frontend przechowuje emaile i statusy Apollo w Postgres/Neon przez API backend.  
+GitHub Pages nie obsługuje backendu — API musi być osobną usługą.
+
+### Uruchomienie lokalne (full stack)
+
+**Backend:**
+```bash
+cd "/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie Apollo/Prasówki SpendGuru"
+source ../.venv/bin/activate
+set -a; source .env; set +a
+uvicorn src.site_api.app:app --reload --port 8000
+```
+
+**Frontend (osobny terminal):**
+```bash
+cd "/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie Apollo/Prasówki SpendGuru"
+python3 -m http.server 8080
+```
+
+Otwórz `http://localhost:8080` — strona automatycznie łączy się z `http://localhost:8000`.
+
+**Test zapisu w DBeaver:**
+```sql
+select article_title, tier1_email, tier2_email, apollo_status
+from apollo.press_articles
+order by updated_at desc;
+```
+
+### Endpointy API
+
+| Endpoint | Metoda | Opis |
+|----------|--------|------|
+| `/health` | GET | Health check |
+| `/api/articles` | GET | Lista artykułów z bazy |
+| `/api/articles/contact` | POST | Zapisz email (`{ article_url, tier, email }`) |
+| `/api/articles/status` | POST | Zapisz status Apollo (`{ article_url, apollo_status }`) |
+
+### Deployment na Render
+
+1. Połącz repo z [Render.com](https://render.com) — wykryje `render.yaml` automatycznie
+2. Ustaw sekret `DATABASE_URL` w **Render Dashboard → Environment**
+3. Po deploymencie skopiuj URL usługi (np. `https://prasowka-api.onrender.com`)
+4. Wstaw URL do `js/config.js`:
+   ```js
+   window.PRASOWKA_API_URL = 'https://prasowka-api.onrender.com';
+   ```
+5. Commit i push — GitHub Pages zacznie używać API
+
+---
+
 ## Uruchamianie ręczne
 
 Wszystkie komendy uruchamiane z katalogu **`Prasówki SpendGuru/`**:

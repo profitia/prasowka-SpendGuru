@@ -380,3 +380,87 @@ def load_press_articles() -> list[dict]:
             "updated_at":     r["updated_at"].isoformat() if r["updated_at"] else "",
         })
     return result
+
+
+# ---------------------------------------------------------------------------
+# Contact field updates (API endpoints)
+# ---------------------------------------------------------------------------
+
+_UPDATE_TIER1_EMAIL_SQL = """
+UPDATE apollo.press_articles
+SET tier1_email = %(email)s, updated_at = now()
+WHERE article_url = %(article_url)s
+RETURNING article_id, article_url, tier1_email, tier2_email, apollo_status, updated_at
+"""
+
+_UPDATE_TIER2_EMAIL_SQL = """
+UPDATE apollo.press_articles
+SET tier2_email = %(email)s, updated_at = now()
+WHERE article_url = %(article_url)s
+RETURNING article_id, article_url, tier1_email, tier2_email, apollo_status, updated_at
+"""
+
+_UPDATE_APOLLO_STATUS_SQL = """
+UPDATE apollo.press_articles
+SET apollo_status = %(apollo_status)s, updated_at = now()
+WHERE article_url = %(article_url)s
+RETURNING article_id, article_url, tier1_email, tier2_email, apollo_status, updated_at
+"""
+
+
+def _row_to_contact_response(row: dict) -> dict:
+    """Mapuje wiersz z bazy na odpowiedź API."""
+    return {
+        "article_id":    row["article_id"],
+        "article_url":   row["article_url"],
+        "tier1_email":   row.get("tier1_email") or "",
+        "tier2_email":   row.get("tier2_email") or "",
+        "apollo_status": row.get("apollo_status") or "Nie wysłany",
+        "updated_at":    row["updated_at"].isoformat() if row.get("updated_at") else "",
+    }
+
+
+def update_tier_email(article_url: str, tier: str, email: str) -> Optional[dict]:
+    """
+    Aktualizuje tier1_email lub tier2_email dla artykułu.
+    Zwraca zaktualizowany rekord lub None jeśli artykuł nie znaleziony.
+    """
+    import psycopg.rows  # type: ignore
+
+    if tier == "tier_1_c_level":
+        sql = _UPDATE_TIER1_EMAIL_SQL
+    elif tier == "tier_2_procurement_management":
+        sql = _UPDATE_TIER2_EMAIL_SQL
+    else:
+        raise ValueError(f"Nieznany tier: {tier!r}")
+
+    with get_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(sql, {"email": email, "article_url": article_url})
+            row = cur.fetchone()
+        conn.commit()
+
+    if row is None:
+        return None
+    return _row_to_contact_response(row)
+
+
+def update_apollo_status(article_url: str, apollo_status: str) -> Optional[dict]:
+    """
+    Aktualizuje apollo_status dla artykułu.
+    Zwraca zaktualizowany rekord lub None jeśli artykuł nie znaleziony.
+    """
+    import psycopg.rows  # type: ignore
+
+    with get_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(
+                _UPDATE_APOLLO_STATUS_SQL,
+                {"apollo_status": apollo_status, "article_url": article_url},
+            )
+            row = cur.fetchone()
+        conn.commit()
+
+    if row is None:
+        return None
+    return _row_to_contact_response(row)
