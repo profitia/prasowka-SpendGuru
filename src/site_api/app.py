@@ -104,7 +104,7 @@ class StatusRequest(BaseModel):
     @field_validator("apollo_status")
     @classmethod
     def validate_status(cls, v: str) -> str:
-        allowed = {"Nie wysłany", "Wysłany"}
+        allowed = {"waiting", "sent"}
         if v not in allowed:
             raise ValueError(f"apollo_status musi być jednym z: {allowed}")
         return v

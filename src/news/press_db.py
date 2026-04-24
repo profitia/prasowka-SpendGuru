@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS apollo.press_articles (
     tier2_email     TEXT,
     reason          TEXT,
     context         TEXT,
-    apollo_status   TEXT NOT NULL DEFAULT 'Nie wysłany',
+    apollo_status   TEXT NOT NULL DEFAULT 'waiting',
     raw_payload     JSONB,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -112,9 +112,9 @@ ON CONFLICT (article_url) DO UPDATE SET
         ELSE EXCLUDED.tier2_email
     END,
     apollo_status = CASE
-        WHEN apollo.press_articles.apollo_status <> 'Nie wysłany'
-        THEN apollo.press_articles.apollo_status
-        ELSE 'Nie wysłany'
+        WHEN apollo.press_articles.apollo_status = 'sent'
+        THEN 'sent'
+        ELSE 'waiting'
     END,
     updated_at = now()
 """

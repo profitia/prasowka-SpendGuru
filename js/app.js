@@ -76,6 +76,10 @@ function debounce(fn, ms) {
 // Contact storage (localStorage)
 // ============================================================
 
+function statusLabel(status) {
+  return status === 'sent' ? 'Wysłany' : 'Do wysłania';
+}
+
 function contactKey(articleId, tier) {
   return `prasowka_contact_${articleId}_t${tier}`;
 }
@@ -98,7 +102,7 @@ function saveContact(articleId, tier, article, email, apolloStatus) {
     full_name:     person,
     job_title:     position,
     email:         email !== undefined ? email : (existing.email ?? ''),
-    apollo_status: apolloStatus !== undefined ? apolloStatus : (existing.apollo_status ?? 'Nie wysłany'),
+    apollo_status: apolloStatus !== undefined ? apolloStatus : (existing.apollo_status ?? 'waiting'),
     updated_at:    new Date().toISOString(),
   };
   localStorage.setItem(contactKey(articleId, tier), JSON.stringify(data));
@@ -110,7 +114,7 @@ function getContactEmail(articleId, tier) {
 }
 
 function getApolloStatus(articleId, tier) {
-  return getContact(articleId, tier)?.apollo_status ?? 'Nie wysłany';
+  return getContact(articleId, tier)?.apollo_status ?? 'waiting';
 }
 
 // ============================================================
@@ -143,7 +147,7 @@ function syncDbContactsToLocalStorage() {
       if (!hasPerson) return;
 
       const dbEmail  = tier === 1 ? (article.tier1_email || '') : (article.tier2_email || '');
-      const dbStatus = article.apollo_status || 'Nie wysłany';
+      const dbStatus = article.apollo_status || 'waiting';
       const existing = getContact(article.id, tier);
 
       // Overwrite localStorage with DB values (DB wins)
@@ -239,7 +243,7 @@ function getArticleApolloStatuses(article) {
   const statuses = [];
   if (article.tier1_person) statuses.push(getApolloStatus(article.id, 1));
   if (article.tier2_person) statuses.push(getApolloStatus(article.id, 2));
-  if (statuses.length === 0) statuses.push('Nie wysłany');
+  if (statuses.length === 0) statuses.push('waiting');
   return statuses;
 }
 
@@ -393,11 +397,11 @@ function renderPersonBlock(article, tier) {
 
   const contact      = getContact(article.id, tier);
   const savedEmail   = contact?.email ?? '';
-  const apolloStatus = contact?.apollo_status ?? 'Nie wysłany';
-  const isChecked    = apolloStatus === 'Wysłany' ? 'checked' : '';
+  const apolloStatus = contact?.apollo_status ?? 'waiting';
+  const isChecked    = apolloStatus === 'sent' ? 'checked' : '';
   const tierClass    = tier === 1 ? 'tier1' : 'tier2';
   const inputId      = `email_${escAttr(article.id)}_t${tier}`;
-  const badgeClass   = apolloStatus === 'Wysłany' ? 'apollo-badge--sent' : 'apollo-badge--unsent';
+  const badgeClass   = apolloStatus === 'sent' ? 'apollo-badge--sent' : 'apollo-badge--unsent';
   const cmdHtml      = renderCommandSection(article.id, tier, savedEmail, article);
 
   return `
@@ -406,7 +410,7 @@ function renderPersonBlock(article, tier) {
          data-tier="${tier}">
       <div class="person-header">
         <span class="tier-label">Osoba Tier ${tier}</span>
-        <span class="apollo-badge ${badgeClass}" id="status_badge_${escAttr(article.id)}_t${tier}">${escHtml(apolloStatus)}</span>
+        <span class="apollo-badge ${badgeClass}" id="status_badge_${escAttr(article.id)}_t${tier}">${escHtml(statusLabel(apolloStatus))}</span>
       </div>
       <div class="card-field">
         <span class="field-label">Imię i nazwisko</span>
@@ -555,7 +559,7 @@ function handleSaveEmail(e) {
 
   // Save to localStorage — preserve existing apollo_status
   const existing = getContact(articleId, tier);
-  saveContact(articleId, tier, article, email, existing?.apollo_status ?? 'Nie wysłany');
+  saveContact(articleId, tier, article, email, existing?.apollo_status ?? 'waiting');
 
   // Refresh command block
   const cmdEl = document.getElementById(`cmd_${articleId}_t${tier}`);
@@ -594,15 +598,15 @@ function handleApolloCheckbox(e) {
   const article     = allArticles.find(a => a.id === articleId);
   if (!article) return;
 
-  const apolloStatus = cb.checked ? 'Wysłany' : 'Nie wysłany';
+  const apolloStatus = cb.checked ? 'sent' : 'waiting';
   const existing     = getContact(articleId, tier);
   saveContact(articleId, tier, article, existing?.email ?? '', apolloStatus);
 
   // Update badge
   const badgeEl = document.getElementById(`status_badge_${articleId}_t${tier}`);
   if (badgeEl) {
-    badgeEl.textContent = apolloStatus;
-    badgeEl.className   = `apollo-badge ${apolloStatus === 'Wysłany' ? 'apollo-badge--sent' : 'apollo-badge--unsent'}`;
+    badgeEl.textContent = statusLabel(apolloStatus);
+    badgeEl.className   = `apollo-badge ${apolloStatus === 'sent' ? 'apollo-badge--sent' : 'apollo-badge--unsent'}`;
   }
 
   // Confirmation element
@@ -626,10 +630,6 @@ function handleApolloCheckbox(e) {
     }
   }
 }
-
-// ============================================================
-// Copy command (event delegation on #cards)
-// ============================================================
 
 function handleCopyClick(e) {
   const btn = e.target.closest('.btn-copy');
