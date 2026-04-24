@@ -229,6 +229,8 @@ def run_brief(
     verbose: bool,
     export_site_data: bool = False,
     dry_run_export_preview_json: bool = False,
+    save_to_db: bool = False,
+    skip_email: bool = False,
 ) -> None:
     cfg = _load_config(brief_name)
 
@@ -322,6 +324,22 @@ def run_brief(
         f.write(html)
     log.info("Podgląd HTML: %s", preview_path)
 
+    # --- Save to Postgres ---
+    if save_to_db:
+        try:
+            from news.press_db import upsert_press_articles as _db_upsert  # noqa: E402
+            db_records = [
+                {
+                    **_map_to_site_article(a, a["classification"], brief_name, industry, now),
+                    "raw_payload": {k: v for k, v in a.items() if k != "text"},
+                }
+                for a in qualified
+            ]
+            saved = _db_upsert(db_records)
+            log.info("[DB] Zapisano %d artykułów do apollo.press_articles", saved)
+        except Exception as exc:
+            log.error("[DB] Błąd zapisu do bazy danych: %s", exc)
+
     # --- Export to site data (data/articles.json) ---
     if export_site_data and not dry_run:
         site_data_path = os.path.join(_ROOT_DIR, "data", "articles.json")
@@ -338,8 +356,9 @@ def run_brief(
         )
 
     # --- Send or skip ---
-    if dry_run:
-        log.info("[DRY-RUN] Mail NIE wysłany. Podgląd zapisany: %s", preview_path)
+    if dry_run or skip_email:
+        reason = "DRY-RUN" if dry_run else "SKIP-EMAIL"
+        log.info("[%s] Mail NIE wysłany. Podgląd zapisany: %s", reason, preview_path)
     else:
         log.info("Wysyłam mail do: %s (temat: %s)", recipient, subject)
         send_email(recipient, subject, html)
@@ -380,6 +399,10 @@ Przykłady:
                             "(nie działa z --dry-run; użyj --dry-run-export-preview-json)")
     run_p.add_argument("--dry-run-export-preview-json", action="store_true",
                        help="W trybie --dry-run zapisz artykuły do outputs/news/*_preview_articles.json")
+    run_p.add_argument("--save-to-db", action="store_true",
+                       help="Zapisz zakwalifikowane artykuły do bazy Postgres (wymaga DATABASE_URL)")
+    run_p.add_argument("--skip-email", action="store_true",
+                       help="Nie wysyłaj maila (np. w trybie CI/CD)")
     run_p.add_argument("--verbose", action="store_true",
                        help="Szczegółowe logi (DEBUG)")
 
@@ -393,6 +416,8 @@ Przykłady:
             verbose=args.verbose,
             export_site_data=args.export_site_data,
             dry_run_export_preview_json=args.dry_run_export_preview_json,
+            save_to_db=args.save_to_db,
+            skip_email=args.skip_email,
         )
     else:
         parser.print_help()
