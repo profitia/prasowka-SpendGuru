@@ -4,19 +4,18 @@ rebuild_articles_json_from_db.py
 =================================
 Generuje czysty plik data/articles.json z bazy Neon Postgres.
 
-Pobiera tylko rekordy z data_quality_status IN ('ok', 'unknown').
-Pomija: rejected, needs_review.
+Domyślnie: eksportuje WYŁĄCZNIE rekordy data_quality_status = 'ok'.
+Pomija: rejected, needs_review, unknown.
 Waliduje każdy rekord przed zapisem (validator wbudowany).
 
 Użycie:
   python scripts/rebuild_articles_json_from_db.py [--dry-run] [--verbose]
 
 Opcje:
-  --dry-run     Nie zapisuje pliku, tylko drukuje podsumowanie
-  --verbose     Szczegółowy output (co pomija i dlaczego)
-  --allow-unknown  Dołącz rekordy z data_quality_status='unknown' (domyślnie tak)
-  --only-ok        Tylko rekordy data_quality_status='ok'
-  --output PATH    Ścieżka wyjściowa (domyślnie: data/articles.json)
+  --dry-run         Nie zapisuje pliku, tylko drukuje podsumowanie
+  --verbose         Szczegółowy output (co pomija i dlaczego)
+  --include-unknown Dołącz rekordy z data_quality_status='unknown' (tylko do analizy/debugowania)
+  --output PATH     Ścieżka wyjściowa (domyślnie: data/articles.json)
 """
 from __future__ import annotations
 
@@ -257,7 +256,7 @@ def fetch_quality_records(allow_statuses: set[str], verbose: bool) -> list[dict]
 def rebuild(args) -> None:
     load_db_env()
 
-    allow_statuses = {"ok", "unknown"} if not args.only_ok else {"ok"}
+    allow_statuses = {"ok", "unknown"} if args.include_unknown else {"ok"}
 
     print("Pobieranie danych z bazy...")
     rows = fetch_quality_records(allow_statuses, args.verbose)
@@ -320,8 +319,9 @@ def rebuild(args) -> None:
     print(f"\n  Zapisano: {output_path} ({len(output)} rekordów)")
 
     if not output:
-        print("\n  UWAGA: Plik jest pusty — brak rekordów spełniających kryteria jakości.")
-        print("  Użyj scripts/cleanup_bad_press_articles.py aby zatwierdzić poprawne rekordy.")
+        print("\n  UWAGA: Plik jest pusty — brak rekordów z data_quality_status='ok'.")
+        print("  Użyj scripts/cleanup_bad_press_articles.py aby oznaczyć rekordy jako 'ok'.")
+        print("  Aby zobaczyć rekordy 'unknown': dodaj flagę --include-unknown.")
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -339,8 +339,8 @@ def main() -> None:
         help="Szczegółowy output"
     )
     parser.add_argument(
-        "--only-ok", action="store_true",
-        help="Eksportuj tylko rekordy z data_quality_status='ok'"
+        "--include-unknown", action="store_true",
+        help="Dołącz rekordy z data_quality_status='unknown' (domyślnie: wykluczone)"
     )
     parser.add_argument(
         "--output", default=str(_ROOT / "data" / "articles.json"),
