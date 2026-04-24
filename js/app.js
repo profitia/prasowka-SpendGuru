@@ -362,8 +362,10 @@ function buildCommand(article, fullName, email, tier) {
   );
 }
 
-function renderCommandSection(articleId, tier, email, article) {
+function renderCommandSection(articleId, tier, email, article, apolloStatus) {
+  apolloStatus    = apolloStatus ?? 'waiting';
   const hasEmail  = !!(email && email.includes('@'));
+  const isSent    = apolloStatus === 'sent';
   const confirmId = `copy_confirm_${articleId}_t${tier}`;
   const previewId = `cmd_preview_${articleId}_t${tier}`;
 
@@ -377,21 +379,35 @@ function renderCommandSection(articleId, tier, email, article) {
       </div>`;
   }
 
+  const runLabel    = isSent ? 'Kampania wysłana' : 'Uruchom kampanię Apollo';
+  const runDisabled = !hasEmail || isSent ? 'disabled' : '';
+  const runClass    = `btn-run-apollo${isSent ? ' btn-run-apollo--sent' : ''}${!hasEmail ? ' btn-run-apollo--disabled' : ''}`;
+  const artUrl      = escAttr(article.source_url ?? '');
+
+  const hintHtml = !hasEmail
+    ? `<span class="cmd-hint">Zapisz email, aby uruchomić kampanię</span>`
+    : `<span class="cmd-hint cmd-hint--info">${isSent ? 'Kampania uruchomiona. Kopiuj komendę jako fallback.' : 'Uruchom auto pipeline lub skopiuj komendę do terminala.'}</span>
+           <button class="btn-cmd-toggle"
+                   data-preview-id="${escAttr(previewId)}">▸ Pokaż komendę</button>`;
+
   return `
     <div class="cmd-wrapper">
       <div class="apollo-actions">
+        <button class="${runClass}"
+                data-article-id="${escAttr(articleId)}"
+                data-tier="${tier}"
+                data-article-url="${artUrl}"
+                ${runDisabled}>
+          ${escHtml(runLabel)}
+        </button>
         <button class="btn-copy${hasEmail ? '' : ' btn-copy--disabled'}"
                 data-article-id="${escAttr(articleId)}"
                 data-tier="${tier}"
                 ${hasEmail ? '' : 'disabled'}>
-          Kopiuj komendę Apollo
+          Kopiuj komendę
         </button>
       </div>
-      ${hasEmail
-        ? `<span class="cmd-hint cmd-hint--info">Kliknięcie kopiuje komendę i oznacza kontakt jako wysłany.</span>
-           <button class="btn-cmd-toggle"
-                   data-preview-id="${escAttr(previewId)}">▸ Pokaż komendę</button>`
-        : `<span class="cmd-hint">Zapisz email, aby skopiować komendę</span>`}
+      ${hintHtml}
       <span class="copy-confirm" id="${confirmId}" aria-live="polite"></span>
       ${previewHtml}
     </div>`;
@@ -414,7 +430,7 @@ function renderPersonBlock(article, tier) {
   const tierClass    = tier === 1 ? 'tier1' : 'tier2';
   const inputId      = `email_${escAttr(article.id)}_t${tier}`;
   const badgeClass   = apolloStatus === 'sent' ? 'apollo-badge--sent' : 'apollo-badge--unsent';
-  const cmdHtml      = renderCommandSection(article.id, tier, savedEmail, article);
+  const cmdHtml      = renderCommandSection(article.id, tier, savedEmail, article, apolloStatus);
 
   return `
     <div class="person-block ${tierClass}"
@@ -575,7 +591,9 @@ function handleSaveEmail(e) {
 
   // Refresh command block
   const cmdEl = document.getElementById(`cmd_${articleId}_t${tier}`);
-  if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tier, email, article);
+  const existingContact = getContact(articleId, tier);
+  const currentStatus   = existingContact?.apollo_status ?? 'waiting';
+  if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tier, email, article, currentStatus);
 
   // Confirmation element
   const confirmEl = document.getElementById(`save_confirm_${articleId}_t${tier}`);
@@ -740,6 +758,75 @@ function handleCopyClick(e) {
 }
 
 // ============================================================
+// Apollo auto pipeline runner
+// ============================================================
+async function handleRunApollo(e) {
+  const btn = e.target.closest('.btn-run-apollo');
+  if (!btn || btn.disabled) return;
+
+  const articleId = btn.dataset.articleId;
+  const tier      = parseInt(btn.dataset.tier, 10);
+  const article   = allArticles.find(a => a.id === articleId);
+  if (!article) return;
+
+  const contact = getContact(articleId, tier);
+  if (!contact?.email) return;
+
+  const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
+  const origLabel = btn.textContent.trim();
+
+  btn.disabled    = true;
+  btn.textContent = 'Uruchamiam kampanię...';
+  if (confirmEl) confirmEl.textContent = '';
+
+  const body = {
+    article_url:  article.source_url ?? '',
+    company_name: article.company ?? '',
+    full_name:    contact.full_name ?? '',
+    email:        contact.email,
+    tier:         TIER_VALUES[tier],
+    job_title:    contact.job_title ?? '',
+  };
+
+  let result = { ok: false, message: 'Błąd połączenia z API' };
+
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 210_000); // 210 s > backend 180 s
+    const res = await fetch(`${API_BASE_URL}/api/apollo/run-auto`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+      signal:  controller.signal,
+    });
+    clearTimeout(tid);
+    result = await res.json().catch(() => ({ ok: false, message: `HTTP ${res.status}` }));
+  } catch (err) {
+    result = {
+      ok:      false,
+      message: err.name === 'AbortError' ? 'Timeout — pipeline trwał za długo' : `Błąd połączenia: ${err.message}`,
+    };
+  }
+
+  if (result.ok) {
+    _markSentInUI(articleId, tier, article);
+    const cmdEl = document.getElementById(`cmd_${articleId}_t${tier}`);
+    if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tier, contact.email, article, 'sent');
+    if (confirmEl) {
+      confirmEl.textContent = result.message || 'Kampania Apollo uruchomiona ✔';
+      setTimeout(() => { confirmEl.textContent = ''; }, 4000);
+    }
+  } else {
+    btn.disabled    = false;
+    btn.textContent = origLabel;
+    if (confirmEl) {
+      confirmEl.textContent = result.message || 'Nie udało się uruchomić kampanii Apollo';
+      setTimeout(() => { confirmEl.textContent = ''; }, 5000);
+    }
+  }
+}
+
+// ============================================================
 // Pagination
 // ============================================================
 
@@ -882,7 +969,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event delegation on cards grid
   const cardsEl = document.getElementById('cards');
-  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); });
+  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleRunApollo(e); });
   cardsEl.addEventListener('change', handleApolloCheckbox);
 
   // Event delegation on pagination

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,6 +41,19 @@ from news.press_db import (
     update_tier_email,
     update_apollo_status,
 )
+
+# ---------------------------------------------------------------------------
+# Apollo pipeline configuration (lokalna ścieżka do workspacu Kampanie Apollo)
+# ---------------------------------------------------------------------------
+APOLLO_ROOT    = os.environ.get(
+    "APOLLO_ROOT",
+    "/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie Apollo",
+)
+APOLLO_PYTHON  = os.environ.get(
+    "APOLLO_PYTHON",
+    "/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie Apollo/.venv/bin/python",
+)
+APOLLO_TIMEOUT = int(os.environ.get("APOLLO_TIMEOUT", "180"))
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -107,6 +121,31 @@ class StatusRequest(BaseModel):
         allowed = {"waiting", "sent"}
         if v not in allowed:
             raise ValueError(f"apollo_status musi być jednym z: {allowed}")
+        return v
+
+
+class RunAutoRequest(BaseModel):
+    article_url: str
+    company_name: str = ""
+    full_name: str = ""
+    email: str
+    tier: str
+    job_title: str = ""
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_run(cls, v: str) -> str:
+        v = v.strip()
+        if not v or "@" not in v:
+            raise ValueError("Nieprawidłowy format email")
+        return v
+
+    @field_validator("tier")
+    @classmethod
+    def validate_tier_run(cls, v: str) -> str:
+        allowed = {"tier_1_c_level", "tier_2_procurement_management"}
+        if v not in allowed:
+            raise ValueError(f"tier musi być jednym z: {sorted(allowed)}")
         return v
 
 
@@ -190,3 +229,85 @@ async def save_status(body: StatusRequest) -> dict:
 
     log.info("Status → %s dla %s", body.apollo_status, body.article_url[:60])
     return result
+
+
+@app.post("/api/apollo/run-auto")
+async def run_apollo_auto(body: RunAutoRequest) -> dict:
+    """
+    Uruchamia auto pipeline orchestratora dla wybranego artykułu.
+    Komenda: python src/news/orchestrator.py auto build-sequence --single-article-url <url> --verbose
+
+    Uwaga: działa tylko lokalnie (wymaga dostępu do katalogu APOLLO_ROOT).
+    Na Render/Railway nie zadziała bez przeniesienia projektu na serwer.
+    """
+    log.info(
+        "POST /api/apollo/run-auto: %s (tier=%s, email=%s)",
+        body.article_url[:80], body.tier, body.email,
+    )
+    cmd = [
+        APOLLO_PYTHON,
+        "src/news/orchestrator.py",
+        "auto",
+        "build-sequence",
+        "--single-article-url", body.article_url,
+        "--verbose",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=APOLLO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=APOLLO_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        log.error("Timeout subprocess dla: %s", body.article_url[:80])
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "message": f"Timeout — pipeline trwał ponad {APOLLO_TIMEOUT}s",
+        }
+    except FileNotFoundError as exc:
+        log.error("Nie znaleziono interpretera lub orchestratora: %s", exc)
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stdout_tail": "",
+            "stderr_tail": str(exc),
+            "message": "Nie znaleziono interpretera Python lub orchestratora",
+        }
+    except Exception as exc:
+        log.exception("Błąd subprocess w /api/apollo/run-auto")
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stdout_tail": "",
+            "stderr_tail": str(exc),
+            "message": "Błąd uruchomienia pipeline'u",
+        }
+
+    stdout_tail = "\n".join(proc.stdout.splitlines()[-30:]) if proc.stdout else ""
+    stderr_tail = "\n".join(proc.stderr.splitlines()[-30:]) if proc.stderr else ""
+    ok = proc.returncode == 0
+
+    log.info(
+        "auto build-sequence returncode=%d dla %s",
+        proc.returncode, body.article_url[:60],
+    )
+
+    if ok:
+        try:
+            update_apollo_status(body.article_url, "sent")
+            log.info("apollo_status → sent dla %s", body.article_url[:60])
+        except Exception:
+            log.exception("Nie udało się zaktualizować apollo_status po run-auto")
+
+    return {
+        "ok": ok,
+        "returncode": proc.returncode,
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+        "message": "Kampania Apollo uruchomiona ✔" if ok else "Nie udało się uruchomić kampanii Apollo",
+    }

@@ -742,6 +742,37 @@ a:hover { text-decoration: underline; }
   flex-wrap: wrap;
 }
 
+.btn-run-apollo {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 13px;
+  font-size: 0.80rem;
+  font-family: var(--font);
+  font-weight: 600;
+  border: none;
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: background .15s, opacity .15s;
+  white-space: nowrap;
+}
+
+.btn-run-apollo:hover:not(:disabled) {
+  background: var(--color-accent-hover, #1a5fbd);
+}
+
+.btn-run-apollo:disabled,
+.btn-run-apollo--disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.btn-run-apollo--sent {
+  background: var(--color-green);
+  opacity: .7;
+}
+
 .btn-cmd-toggle {
   background: none;
   border: none;
