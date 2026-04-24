@@ -24,6 +24,10 @@ services:
         sync: false          # Apollo.io API key — ustaw ręcznie w Render Dashboard
       - key: APOLLO_SEQUENCE_ID
         sync: false          # ID sekwencji Apollo — opcjonalny, ustaw w Render Dashboard
+      - key: APOLLO_SENDER_EMAIL_ACCOUNT_ID
+        sync: false          # ID skrzynki nadawczej — wymagany, ustaw w Render Dashboard
+      # - key: APOLLO_SENDER_EMAIL_ACCOUNT_IDS
+      #   sync: false        # Wiele mailboxów (lista po przecinku) — TODO: round-robin
       - key: CORS_ORIGINS
         value: "https://profitia.github.io,http://localhost:8000,http://localhost:8080"
       - key: APP_ENV

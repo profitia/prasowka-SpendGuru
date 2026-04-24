@@ -129,6 +129,44 @@ def find_or_create_contact(
 
 
 # ---------------------------------------------------------------------------
+# Sender mailbox resolution
+# ---------------------------------------------------------------------------
+
+def resolve_sender_email_account_id() -> str:
+    """
+    Zwraca ID skrzynki nadawczej Apollo (send_email_from_email_account_id).
+
+    Priorytety:
+      1. APOLLO_SENDER_EMAIL_ACCOUNT_IDS (lista po przecinku) → bierze pierwszy ID.
+         TODO: round-robin / wybór mailboxa per kampania (gdy wiele skrzynek).
+      2. APOLLO_SENDER_EMAIL_ACCOUNT_ID (pojedynczy ID).
+
+    Raises:
+      EnvironmentError jeśli żadna zmienna nie jest ustawiona.
+    """
+    ids_raw = os.environ.get("APOLLO_SENDER_EMAIL_ACCOUNT_IDS", "").strip()
+    if ids_raw:
+        ids = [i.strip() for i in ids_raw.split(",") if i.strip()]
+        if ids:
+            if len(ids) > 1:
+                log.info(
+                    "resolve_sender: znaleziono %d mailboxów w APOLLO_SENDER_EMAIL_ACCOUNT_IDS, "
+                    "używam pierwszego (TODO: round-robin): %s",
+                    len(ids), ids[0],
+                )
+            return ids[0]
+
+    single = os.environ.get("APOLLO_SENDER_EMAIL_ACCOUNT_ID", "").strip()
+    if single:
+        return single
+
+    raise EnvironmentError(
+        "Brak APOLLO_SENDER_EMAIL_ACCOUNT_ID — Apollo API wymaga wskazania skrzynki nadawczej. "
+        "Ustaw APOLLO_SENDER_EMAIL_ACCOUNT_ID w Render Dashboard lub .env."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Sequence operations
 # ---------------------------------------------------------------------------
 
@@ -144,8 +182,9 @@ def add_contact_to_sequence(contact_id: str, sequence_id: str) -> tuple[bool, st
     """
     Dodaje kontakt do sekwencji (emailer_campaign) w Apollo.
 
-    Payload zgodny z działającym klientem:
-      - emailer_campaign_id: wymagane przez Apollo (oprócz ID w URL)
+    Payload zgodny z wymaganiami Apollo API:
+      - emailer_campaign_id: wymagane (oprócz ID w URL)
+      - send_email_from_email_account_id: wymagane — z resolve_sender_email_account_id()
       - sequence_active_in_other_campaigns: True  (bypass jeśli aktywny gdzie indziej)
       - sequence_finished_in_other_campaigns: True (bypass jeśli skończony gdzie indziej)
 
@@ -153,18 +192,26 @@ def add_contact_to_sequence(contact_id: str, sequence_id: str) -> tuple[bool, st
       (True, "") jeśli sukces
       (False, diagnostic_message) jeśli błąd
     """
+    try:
+        sender_id = resolve_sender_email_account_id()
+    except EnvironmentError as exc:
+        msg = str(exc)
+        log.error("[SEQUENCE ADD] %s", msg)
+        return False, msg
+
     endpoint = f"emailer_campaigns/{sequence_id}/add_contact_ids"
     url = f"{APOLLO_BASE_URL}/{endpoint}"
     payload = {
         "contact_ids": [contact_id],
         "emailer_campaign_id": sequence_id,
+        "send_email_from_email_account_id": sender_id,
         "sequence_active_in_other_campaigns": True,
         "sequence_finished_in_other_campaigns": True,
     }
 
     log.info(
-        "[SEQUENCE ADD] endpoint=%s contact_id=%s sequence_id=%s payload=%s",
-        url, contact_id, sequence_id, payload,
+        "[SEQUENCE ADD] endpoint=%s | sequence_id=%s | contact_id=%s | sender_email_account_id=%s",
+        url, sequence_id, contact_id, sender_id,
     )
 
     try:
