@@ -1,14 +1,15 @@
 /**
  * Prasówka SpendGuru — konfiguracja API
  *
- * Zmień PRASOWKA_API_URL na URL swojego deploymentu (Render/Railway)
- * przed wdrożeniem na GitHub Pages.
- *
- * Lokalnie: http://localhost:8000
- * Produkcja: https://prasowka-api.onrender.com (lub inny URL)
+ * Produkcja: https://prasowka-spendguru-api.onrender.com
+ * Lokalnie:  http://localhost:8000
  */
 
 // Jeśli zmienna jest już ustawiona (np. przez CI/CD), nie nadpisuj.
 if (typeof window.PRASOWKA_API_URL === 'undefined') {
-  window.PRASOWKA_API_URL = 'http://localhost:8000';
+  // Produkcja — Render.com
+  window.PRASOWKA_API_URL = 'https://prasowka-spendguru-api.onrender.com';
+
+  // Lokalny development: odkomentuj poniższe i zakomentuj linię powyżej
+  // window.PRASOWKA_API_URL = 'http://localhost:8000';
 }

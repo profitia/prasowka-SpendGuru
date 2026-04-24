@@ -3,21 +3,29 @@
 # Deployment:
 #   1. Połącz repo https://github.com/profitia/prasowka-SpendGuru z Render
 #   2. Render wykryje ten plik i skonfiguruje usługę automatycznie
-#   3. Ustaw sekret DATABASE_URL w Render Dashboard → Environment
-#   4. Po deploymencie skopiuj URL usługi (np. https://prasowka-api.onrender.com)
-#      i wstaw go do js/config.js jako window.PRASOWKA_API_URL
+#   3. Ustaw sekrety w Render Dashboard → Environment:
+#        DATABASE_URL   — Neon Postgres connection string
+#        APOLLO_API_KEY — klucz API Apollo.io
+#        APOLLO_SEQUENCE_ID — (opcjonalnie) ID sekwencji do której dodawać kontakty
+#   4. URL usługi (np. https://prasowka-spendguru-api.onrender.com)
+#      wstaw do js/config.js jako window.PRASOWKA_API_URL
 
 services:
   - type: web
-    name: prasowka-api
+    name: prasowka-spendguru-api
     runtime: python
     rootDir: .
     buildCommand: pip install -r requirements-news.txt
     startCommand: uvicorn src.site_api.app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
-        sync: false          # ustaw ręcznie w Render Dashboard
+        sync: false          # Neon Postgres — ustaw ręcznie w Render Dashboard
+      - key: APOLLO_API_KEY
+        sync: false          # Apollo.io API key — ustaw ręcznie w Render Dashboard
+      - key: APOLLO_SEQUENCE_ID
+        sync: false          # ID sekwencji Apollo — opcjonalny, ustaw w Render Dashboard
       - key: CORS_ORIGINS
-        value: "*"           # zmień na konkretny URL GitHub Pages w produkcji
-                             # np. https://profitia.github.io
+        value: "https://profitia.github.io,http://localhost:8000,http://localhost:8080"
+      - key: APP_ENV
+        value: production
     healthCheckPath: /health

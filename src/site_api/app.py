@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -46,16 +45,8 @@ from news.press_db import (
 )
 
 # ---------------------------------------------------------------------------
-# Apollo pipeline configuration (lokalna ścieżka do workspacu Kampanie Apollo)
+# Apollo runner config
 # ---------------------------------------------------------------------------
-APOLLO_ROOT    = os.environ.get(
-    "APOLLO_ROOT",
-    "/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie Apollo",
-)
-APOLLO_PYTHON  = os.environ.get(
-    "APOLLO_PYTHON",
-    "/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie Apollo/.venv/bin/python",
-)
 APOLLO_TIMEOUT = int(os.environ.get("APOLLO_TIMEOUT", "180"))
 
 # ---------------------------------------------------------------------------
@@ -78,7 +69,17 @@ app = FastAPI(
 
 # CORS — pozwala na dostęp z GitHub Pages i localhost
 _raw_origins = os.environ.get("CORS_ORIGINS", "")
-allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()] or ["*"]
+_default_origins = [
+    "https://profitia.github.io",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
+if _raw_origins.strip():
+    allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+else:
+    allowed_origins = _default_origins
 
 app.add_middleware(
     CORSMiddleware,
@@ -267,11 +268,11 @@ async def save_status(body: StatusRequest) -> dict:
 @app.post("/api/apollo/run-auto")
 async def run_apollo_auto(body: RunAutoRequest) -> dict:
     """
-    Uruchamia auto pipeline orchestratora dla wybranego artykułu.
-    Komenda: python src/news/orchestrator.py auto build-sequence --single-article-url <url> --verbose
+    Uruchamia Apollo runner dla wybranego artykułu.
+    Importuje i wywołuje apollo_runner.run_auto() bezpośrednio.
+    Nie wymaga lokalnych ścieżek macOS — działa na Render/Railway.
 
-    Uwaga: działa tylko lokalnie (wymaga dostępu do katalogu APOLLO_ROOT).
-    Na Render/Railway nie zadziała bez przeniesienia projektu na serwer.
+    ENV: APOLLO_API_KEY (wymagany), APOLLO_SEQUENCE_ID (opcjonalny)
     """
     log.info(
         "POST /api/apollo/run-auto: %s (tier=%s, email=%s)",
@@ -283,16 +284,7 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
         update_apollo_status(body.article_url, "running")
         log.info("apollo_status → running dla %s", body.article_url[:60])
     except Exception:
-        log.warning("Nie udało się ustawić running przed subprocess (ignorujem)")
-
-    cmd = [
-        APOLLO_PYTHON,
-        "src/news/orchestrator.py",
-        "auto",
-        "build-sequence",
-        "--single-article-url", body.article_url,
-        "--verbose",
-    ]
+        log.warning("Nie udało się ustawić running przed startem runnera (ignorujem)")
 
     def _revert_to_waiting() -> None:
         try:
@@ -302,52 +294,25 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
             log.exception("Nie udało się zrevertować apollo_status do waiting")
 
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=APOLLO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=APOLLO_TIMEOUT,
+        from apollo_runner import run_auto
+        result = run_auto(
+            article_url=body.article_url,
+            email=body.email,
+            full_name=body.full_name,
+            company_name=body.company_name,
+            job_title=body.job_title,
+            tier=body.tier,
         )
-    except subprocess.TimeoutExpired:
-        log.error("Timeout subprocess dla: %s", body.article_url[:80])
-        _revert_to_waiting()
-        return {
-            "ok": False,
-            "returncode": -1,
-            "stdout_tail": "",
-            "stderr_tail": "",
-            "message": f"Timeout — pipeline trwał ponad {APOLLO_TIMEOUT}s. Status przywrócony do Do wysłania.",
-        }
-    except FileNotFoundError as exc:
-        log.error("Nie znaleziono interpretera lub orchestratora: %s", exc)
-        _revert_to_waiting()
-        return {
-            "ok": False,
-            "returncode": -1,
-            "stdout_tail": "",
-            "stderr_tail": str(exc),
-            "message": "Nie znaleziono interpretera Python lub orchestratora. Status przywrócony do Do wysłania.",
-        }
     except Exception as exc:
-        log.exception("Błąd subprocess w /api/apollo/run-auto")
+        log.exception("Błąd apollo_runner w /api/apollo/run-auto")
         _revert_to_waiting()
         return {
             "ok": False,
-            "returncode": -1,
-            "stdout_tail": "",
-            "stderr_tail": str(exc),
-            "message": f"Błąd uruchomienia pipeline'u. Status przywrócony do Do wysłania.",
+            "message": f"Błąd uruchomienia runnera: {exc}. Status przywrócony do Do wysłania.",
+            "details": {},
         }
 
-    stdout_tail = "\n".join(proc.stdout.splitlines()[-30:]) if proc.stdout else ""
-    stderr_tail = "\n".join(proc.stderr.splitlines()[-30:]) if proc.stderr else ""
-    ok = proc.returncode == 0
-
-    log.info(
-        "auto build-sequence returncode=%d dla %s",
-        proc.returncode, body.article_url[:60],
-    )
+    ok = result.get("ok", False)
 
     if ok:
         try:
@@ -381,19 +346,15 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
 
         return {
             "ok": True,
-            "returncode": proc.returncode,
-            "stdout_tail": stdout_tail,
-            "stderr_tail": stderr_tail,
-            "message": "Kampania Apollo uruchomiona ✔",
+            "message": result.get("message", "Kampania Apollo uruchomiona ✔"),
+            "details": result.get("details", {}),
         }
     else:
         _revert_to_waiting()
         return {
             "ok": False,
-            "returncode": proc.returncode,
-            "stdout_tail": stdout_tail,
-            "stderr_tail": stderr_tail,
-            "message": "Nie udało się uruchomić kampanii Apollo. Status przywrócony do Do wysłania.",
+            "message": result.get("message", "Nie udało się uruchomić kampanii Apollo. Status przywrócony do Do wysłania."),
+            "details": result.get("details", {}),
         }
 
 
