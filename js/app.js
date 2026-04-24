@@ -32,6 +32,9 @@ let filteredArticles = [];
 let currentPage      = 1;
 let apiAvailable     = false;  // true gdy GET /api/articles zadziałało
 
+// Lock preventing duplicate clicks for the same article+tier while request is in-flight
+const runningLocks = {};
+
 // ============================================================
 // Utilities
 // ============================================================
@@ -886,6 +889,7 @@ function handleCopyClick(e) {
   const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
 
   function onCopied() {
+    showToast('Skopiowano komendę ✔', 'success', 4000);
     if (confirmEl) {
       confirmEl.textContent = 'Skopiowano komendę ✔';
       setTimeout(() => { confirmEl.textContent = ''; }, 3000);
@@ -921,6 +925,44 @@ function handleCopyClick(e) {
 }
 
 // ============================================================
+// Toast notifications
+// ============================================================
+
+function showToast(message, type = 'info', duration = 5000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return null;
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast--${type}`;
+  toast.setAttribute('role', 'status');
+  toast.textContent = message;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'toast-close';
+  closeBtn.setAttribute('aria-label', 'Zamknij');
+  closeBtn.textContent = '×';
+  closeBtn.onclick = () => dismissToast(toast);
+  toast.appendChild(closeBtn);
+
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast--visible'));
+
+  if (duration > 0) {
+    setTimeout(() => dismissToast(toast), duration);
+  }
+
+  return toast;
+}
+
+function dismissToast(toast) {
+  if (!toast || toast._dismissed) return;
+  toast._dismissed = true;
+  toast.classList.remove('toast--visible');
+  toast.classList.add('toast--hiding');
+  setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 300);
+}
+
+// ============================================================
 // Apollo auto pipeline runner
 // ============================================================
 async function handleRunApollo(e) {
@@ -929,19 +971,34 @@ async function handleRunApollo(e) {
 
   const articleId = btn.dataset.articleId;
   const tier      = parseInt(btn.dataset.tier, 10);
-  const article   = allArticles.find(a => a.id === articleId);
-  if (!article) return;
+  const lockKey   = `${articleId}_t${tier}`;
+
+  // Debounce: ignore duplicate clicks while request is in-flight
+  if (runningLocks[lockKey]) return;
+  runningLocks[lockKey] = true;
+
+  const article = allArticles.find(a => a.id === articleId);
+  if (!article) { runningLocks[lockKey] = false; return; }
 
   const contact = getContact(articleId, tier);
-  if (!contact?.email) return;
+  if (!contact?.email) { runningLocks[lockKey] = false; return; }
 
   const confirmEl  = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
-  const origLabel  = btn.textContent.trim();
-  const prevStatus = contact.apollo_status ?? 'waiting';  // zapamiętaj przed zmianą
+  const prevStatus = contact.apollo_status ?? 'waiting';
 
-  btn.disabled    = true;
-  btn.textContent = 'Uruchamianie...';
   if (confirmEl) confirmEl.textContent = '';
+
+  // Immediately show cold-start toast (no auto-dismiss — dismissed after request completes)
+  const coldStartToast = showToast('Budzę API… to może potrwać do 60 sekund', 'info', 0);
+
+  // After 5 s update the message if still waiting for a response
+  const coldStartTimer = setTimeout(() => {
+    if (coldStartToast && !coldStartToast._dismissed) {
+      const closeBtn = coldStartToast.querySelector('.toast-close');
+      coldStartToast.textContent = 'API nadal startuje… proszę czekać';
+      if (closeBtn) coldStartToast.appendChild(closeBtn);
+    }
+  }, 5000);
 
   // Ustaw running w lokalnym cache i odśwież badge / blok
   saveContact(articleId, tier, article, contact.email, 'running');
@@ -982,14 +1039,18 @@ async function handleRunApollo(e) {
     };
   }
 
+  // Dismiss cold-start toast regardless of outcome
+  clearTimeout(coldStartTimer);
+  dismissToast(coldStartToast);
+
   if (result.ok) {
     _markSentInUI(articleId, tier, article);
     const cmdEl = document.getElementById(`cmd_${articleId}_t${tier}`);
     if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tier, contact.email, article, 'sent');
-    const successMsg = result.message
-      || (prevStatus === 'sent'
-          ? 'Kampania Apollo uruchomiona ponownie ✔'
-          : 'Kampania Apollo uruchomiona ✔');
+    const successMsg = prevStatus === 'sent'
+      ? 'Kampania Apollo uruchomiona ponownie ✔'
+      : 'Kampania Apollo uruchomiona ✔';
+    showToast(successMsg, 'success', 5000);
     if (confirmEl) {
       confirmEl.textContent = successMsg;
       setTimeout(() => { confirmEl.textContent = ''; }, 4000);
@@ -1010,11 +1071,16 @@ async function handleRunApollo(e) {
       badgeElErr.textContent = statusLabel(revertStatus);
       badgeElErr.className   = `apollo-badge apollo-badge--${revertStatus === 'sent' ? 'sent' : 'unsent'}`;
     }
+    const errorMsg = result.message || 'Nie udało się uruchomić kampanii Apollo. Status przywrócony.';
+    showToast('Nie udało się uruchomić kampanii Apollo', 'error', 6000);
+    console.error('[Apollo runner] błąd:', errorMsg);
     if (confirmEl) {
-      confirmEl.textContent = result.message || 'Nie udało się uruchomić kampanii Apollo. Status przywrócony.';
+      confirmEl.textContent = errorMsg;
       setTimeout(() => { confirmEl.textContent = ''; }, 5000);
     }
   }
+
+  runningLocks[lockKey] = false;
 }
 
 // ============================================================
