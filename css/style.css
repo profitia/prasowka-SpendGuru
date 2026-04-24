@@ -848,6 +848,109 @@ a:hover { text-decoration: underline; }
 }
 
 /* ============================================================
+   APOLLO STATUS BADGE (per-contact, in person block header)
+   ============================================================ */
+.apollo-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 20px;
+  letter-spacing: .3px;
+}
+
+.apollo-badge--sent {
+  background: var(--color-green-bg);
+  color: var(--color-green);
+}
+
+.apollo-badge--unsent {
+  background: var(--color-slate-bg);
+  color: var(--color-slate);
+}
+
+/* ============================================================
+   EMAIL INPUT ROW (input + Save button side by side)
+   ============================================================ */
+.email-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.email-input-row .email-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-save {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-family: var(--font);
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--color-accent);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, transform .1s;
+}
+
+.btn-save:hover { background: var(--color-accent-hover); }
+.btn-save:active { transform: translateY(1px); }
+
+.save-confirm {
+  display: block;
+  min-height: 16px;
+  margin-top: 3px;
+  font-size: 0.75rem;
+  color: var(--color-green);
+  font-weight: 500;
+}
+
+/* ============================================================
+   APOLLO CHECKBOX ROW
+   ============================================================ */
+.apollo-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0 2px;
+}
+
+.apollo-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.82rem;
+  color: var(--color-text);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.apollo-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-green);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.apollo-confirm {
+  font-size: 0.75rem;
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+/* Email input error state */
+.email-input.input-error {
+  border-color: var(--color-red);
+  box-shadow: 0 0 0 2px var(--color-red-bg);
+}
+
+/* ============================================================
    PRINT (minimal)
    ============================================================ */
 @media print {

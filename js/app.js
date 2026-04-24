@@ -16,13 +16,6 @@ const WORKSPACE = '/Users/tomaszuscinski/Documents/Visual Code Studio/Kampanie A
 const VENV_ACTIVATE = 'source .venv/bin/activate';
 const ORCHESTRATOR = 'python src/news/orchestrator.py manual';
 
-const STATUS_LABELS = {
-  new:              'Nowy',
-  used_in_campaign: 'W kampanii',
-  rejected:         'Odrzucony',
-  to_verify:        'Do weryfikacji',
-};
-
 const TIER_VALUES = {
   1: 'tier_1_c_level',
   2: 'tier_2_procurement_management',
@@ -75,12 +68,45 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
-function emailKey(articleId, tier) {
-  return `prasowka_email_${articleId}_tier${tier}`;
+// ============================================================
+// Contact storage (localStorage)
+// ============================================================
+
+function contactKey(articleId, tier) {
+  return `prasowka_contact_${articleId}_t${tier}`;
 }
 
-function storedEmail(articleId, tier) {
-  return localStorage.getItem(emailKey(articleId, tier)) ?? '';
+function getContact(articleId, tier) {
+  const raw = localStorage.getItem(contactKey(articleId, tier));
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+function saveContact(articleId, tier, article, email, apolloStatus) {
+  const person   = tier === 1 ? (article.tier1_person ?? '') : (article.tier2_person ?? '');
+  const position = tier === 1 ? (article.tier1_position ?? '') : (article.tier2_position ?? '');
+  const existing = getContact(articleId, tier) ?? {};
+  const data = {
+    article_id:    articleId,
+    article_url:   article.source_url ?? '',
+    company:       article.company ?? '',
+    tier:          TIER_VALUES[tier],
+    full_name:     person,
+    job_title:     position,
+    email:         email !== undefined ? email : (existing.email ?? ''),
+    apollo_status: apolloStatus !== undefined ? apolloStatus : (existing.apollo_status ?? 'Nie wysłany'),
+    updated_at:    new Date().toISOString(),
+  };
+  localStorage.setItem(contactKey(articleId, tier), JSON.stringify(data));
+  return data;
+}
+
+function getContactEmail(articleId, tier) {
+  return getContact(articleId, tier)?.email ?? '';
+}
+
+function getApolloStatus(articleId, tier) {
+  return getContact(articleId, tier)?.apollo_status ?? 'Nie wysłany';
 }
 
 // ============================================================
@@ -160,28 +186,46 @@ function getFilters() {
   };
 }
 
+function getArticleApolloStatuses(article) {
+  const statuses = [];
+  if (article.tier1_person) statuses.push(getApolloStatus(article.id, 1));
+  if (article.tier2_person) statuses.push(getApolloStatus(article.id, 2));
+  if (statuses.length === 0) statuses.push('Nie wysłany');
+  return statuses;
+}
+
 function applyAndRender() {
   const f = getFilters();
 
   filteredArticles = allArticles.filter(a => {
-    // Full-text search
-    if (f.search) {
-      const haystack = [
-        a.title, a.company, a.tier1_person, a.tier1_position,
-        a.tier2_person, a.tier2_position, a.reason, a.context,
-        a.source_name, a.industry,
-      ].join(' ').toLowerCase();
-      if (!haystack.includes(f.search)) return false;
+    // Apollo status filter
+    if (f.status.length) {
+      const articleStatuses = getArticleApolloStatuses(a);
+      if (!f.status.some(s => articleStatuses.includes(s))) return false;
     }
 
     if (f.industry && a.industry !== f.industry) return false;
-    if (f.status.length && !f.status.includes(a.status)) return false;
     if (f.source && a.source_name !== f.source) return false;
     if (f.company && !(a.company ?? '').toLowerCase().includes(f.company)) return false;
     if (f.tier.includes('has_tier1') && !a.tier1_person) return false;
     if (f.tier.includes('has_tier2') && !a.tier2_person) return false;
     if (f.dateFrom && a.article_date && a.article_date < f.dateFrom) return false;
     if (f.dateTo && a.article_date && a.article_date > f.dateTo) return false;
+
+    // Full-text search (includes saved emails and statuses)
+    if (f.search) {
+      const email1  = getContactEmail(a.id, 1);
+      const email2  = getContactEmail(a.id, 2);
+      const status1 = getApolloStatus(a.id, 1);
+      const status2 = getApolloStatus(a.id, 2);
+      const haystack = [
+        a.title, a.source_name, a.source_url, a.company,
+        a.tier1_person, a.tier1_position, email1,
+        a.tier2_person, a.tier2_position, email2,
+        a.industry, status1, status2, a.reason, a.context,
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(f.search)) return false;
+    }
 
     return true;
   });
@@ -267,7 +311,7 @@ function buildCommand(article, fullName, email, tier) {
 
 function renderCommandSection(articleId, tier, email, article) {
   if (!email || !email.includes('@')) {
-    return `<p class="cmd-hint">Wpisz email, aby wygenerować komendę</p>`;
+    return `<p class="cmd-hint">Wpisz i zapisz email, aby wygenerować komendę</p>`;
   }
 
   const fullName = tier === 1 ? (article.tier1_person ?? '') : (article.tier2_person ?? '');
@@ -298,10 +342,14 @@ function renderPersonBlock(article, tier) {
 
   if (!person) return '';
 
-  const saved    = storedEmail(article.id, tier);
-  const cmdHtml  = renderCommandSection(article.id, tier, saved, article);
-  const inputId  = `email_${escAttr(article.id)}_t${tier}`;
-  const tierClass = tier === 1 ? 'tier1' : 'tier2';
+  const contact      = getContact(article.id, tier);
+  const savedEmail   = contact?.email ?? '';
+  const apolloStatus = contact?.apollo_status ?? 'Nie wysłany';
+  const isChecked    = apolloStatus === 'Wysłany' ? 'checked' : '';
+  const tierClass    = tier === 1 ? 'tier1' : 'tier2';
+  const inputId      = `email_${escAttr(article.id)}_t${tier}`;
+  const badgeClass   = apolloStatus === 'Wysłany' ? 'apollo-badge--sent' : 'apollo-badge--unsent';
+  const cmdHtml      = renderCommandSection(article.id, tier, savedEmail, article);
 
   return `
     <div class="person-block ${tierClass}"
@@ -309,6 +357,7 @@ function renderPersonBlock(article, tier) {
          data-tier="${tier}">
       <div class="person-header">
         <span class="tier-label">Osoba Tier ${tier}</span>
+        <span class="apollo-badge ${badgeClass}" id="status_badge_${escAttr(article.id)}_t${tier}">${escHtml(apolloStatus)}</span>
       </div>
       <div class="card-field">
         <span class="field-label">Imię i nazwisko</span>
@@ -320,16 +369,32 @@ function renderPersonBlock(article, tier) {
       </div>
       <div class="email-field">
         <label class="field-label" for="${inputId}">Email</label>
-        <input
-          type="email"
-          id="${inputId}"
-          class="email-input"
-          placeholder="Wpisz email osoby kontaktowej…"
-          value="${escAttr(saved)}"
-          data-article-id="${escAttr(article.id)}"
-          data-tier="${tier}"
-          autocomplete="off"
-          spellcheck="false">
+        <div class="email-input-row">
+          <input
+            type="email"
+            id="${inputId}"
+            class="email-input"
+            placeholder="Wpisz email osoby kontaktowej…"
+            value="${escAttr(savedEmail)}"
+            data-article-id="${escAttr(article.id)}"
+            data-tier="${tier}"
+            autocomplete="off"
+            spellcheck="false">
+          <button class="btn-save"
+                  data-article-id="${escAttr(article.id)}"
+                  data-tier="${tier}">Zapisz</button>
+        </div>
+        <span class="save-confirm" id="save_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
+      </div>
+      <div class="apollo-row">
+        <label class="apollo-label">
+          <input type="checkbox" class="apollo-checkbox"
+                 data-article-id="${escAttr(article.id)}"
+                 data-tier="${tier}"
+                 ${isChecked}>
+          Wysłany do Apollo
+        </label>
+        <span class="apollo-confirm" id="apollo_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
       </div>
       <div class="command-block" id="cmd_${escAttr(article.id)}_t${tier}">
         ${cmdHtml}
@@ -342,20 +407,14 @@ function renderPersonBlock(article, tier) {
 // ============================================================
 
 function renderCard(article) {
-  const statusLabel = STATUS_LABELS[article.status] ?? article.status ?? '—';
-  const statusClass = `badge-status-${article.status ?? 'new'}`;
-  const dateStr     = formatDate(article.article_date);
-
+  const dateStr   = formatDate(article.article_date);
   const tier1Html = renderPersonBlock(article, 1);
   const tier2Html = article.tier2_person ? renderPersonBlock(article, 2) : '';
-
-  const noTier2 = !article.tier2_person;
 
   return `
 <article class="card" data-id="${escAttr(article.id)}">
   <div class="card-badges">
     ${article.industry ? `<span class="badge badge-industry">${escHtml(article.industry)}</span>` : ''}
-    <span class="badge ${statusClass}">${escHtml(statusLabel)}</span>
     ${article.press_type ? `<span class="badge badge-press">${escHtml(article.press_type)}</span>` : ''}
   </div>
 
@@ -379,7 +438,6 @@ function renderCard(article) {
 
   ${tier1Html}
   ${tier2Html}
-  ${noTier2 ? '' : ''}
 
   <hr class="card-divider">
 
@@ -405,29 +463,69 @@ function renderCard(article) {
 }
 
 // ============================================================
-// Email input handling (event delegation on #cards)
+// Email save + Apollo checkbox (event delegation on #cards)
 // ============================================================
 
-function handleEmailInput(e) {
-  const input = e.target;
-  if (!input.classList.contains('email-input')) return;
+function handleSaveEmail(e) {
+  const btn = e.target.closest('.btn-save');
+  if (!btn) return;
 
-  const articleId = input.dataset.articleId;
-  const tier      = parseInt(input.dataset.tier, 10);
-  const email     = input.value.trim();
-
-  // Persist in localStorage
-  const key = emailKey(articleId, tier);
-  email ? localStorage.setItem(key, email) : localStorage.removeItem(key);
-
-  // Find the article
-  const article = allArticles.find(a => a.id === articleId);
+  const articleId = btn.dataset.articleId;
+  const tier      = parseInt(btn.dataset.tier, 10);
+  const article   = allArticles.find(a => a.id === articleId);
   if (!article) return;
 
-  // Update command block
+  const inputEl = document.getElementById(`email_${articleId}_t${tier}`);
+  const email   = inputEl?.value.trim() ?? '';
+
+  // Basic validation
+  if (email && !email.includes('@')) {
+    inputEl?.classList.add('input-error');
+    return;
+  }
+  inputEl?.classList.remove('input-error');
+
+  // Save — preserve existing apollo_status
+  const existing = getContact(articleId, tier);
+  saveContact(articleId, tier, article, email, existing?.apollo_status ?? 'Nie wysłany');
+
+  // Refresh command block
   const cmdEl = document.getElementById(`cmd_${articleId}_t${tier}`);
-  if (cmdEl) {
-    cmdEl.innerHTML = renderCommandSection(articleId, tier, email, article);
+  if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tier, email, article);
+
+  // Show confirmation
+  const confirmEl = document.getElementById(`save_confirm_${articleId}_t${tier}`);
+  if (confirmEl) {
+    confirmEl.textContent = 'Zapisano email';
+    setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+  }
+}
+
+function handleApolloCheckbox(e) {
+  const cb = e.target;
+  if (!cb.classList.contains('apollo-checkbox')) return;
+
+  const articleId   = cb.dataset.articleId;
+  const tier        = parseInt(cb.dataset.tier, 10);
+  const article     = allArticles.find(a => a.id === articleId);
+  if (!article) return;
+
+  const apolloStatus = cb.checked ? 'Wysłany' : 'Nie wysłany';
+  const existing     = getContact(articleId, tier);
+  saveContact(articleId, tier, article, existing?.email ?? '', apolloStatus);
+
+  // Update badge
+  const badgeEl = document.getElementById(`status_badge_${articleId}_t${tier}`);
+  if (badgeEl) {
+    badgeEl.textContent = apolloStatus;
+    badgeEl.className   = `apollo-badge ${apolloStatus === 'Wysłany' ? 'apollo-badge--sent' : 'apollo-badge--unsent'}`;
+  }
+
+  // Show confirmation
+  const confirmEl = document.getElementById(`apollo_confirm_${articleId}_t${tier}`);
+  if (confirmEl) {
+    confirmEl.textContent = 'Status zaktualizowany';
+    setTimeout(() => { confirmEl.textContent = ''; }, 2500);
   }
 }
 
@@ -516,8 +614,8 @@ function handlePaginationClick(e) {
 function exportCSV() {
   const fields = [
     'article_date', 'title', 'source_name', 'source_url', 'company',
-    'tier', 'full_name', 'job_title', 'email',
-    'industry', 'status', 'reason', 'context',
+    'tier', 'full_name', 'job_title', 'email', 'apollo_status',
+    'industry', 'reason', 'context',
   ];
 
   const rows = [];
@@ -525,21 +623,23 @@ function exportCSV() {
   filteredArticles.forEach(a => {
     const addRow = (tier, person, position) => {
       if (!person) return;
-      const email = storedEmail(a.id, tier) || (tier === 1 ? a.contact_email ?? '' : '');
+      const contact      = getContact(a.id, tier);
+      const email        = contact?.email ?? '';
+      const apolloStatus = contact?.apollo_status ?? 'Nie wysłany';
       rows.push({
-        article_date: a.article_date ?? '',
-        title:        a.title ?? '',
-        source_name:  a.source_name ?? '',
-        source_url:   a.source_url ?? '',
-        company:      a.company ?? '',
-        tier:         TIER_VALUES[tier],
-        full_name:    person,
-        job_title:    position ?? '',
+        article_date:  a.article_date ?? '',
+        title:         a.title ?? '',
+        source_name:   a.source_name ?? '',
+        source_url:    a.source_url ?? '',
+        company:       a.company ?? '',
+        tier:          TIER_VALUES[tier],
+        full_name:     person,
+        job_title:     position ?? '',
         email,
-        industry:     a.industry ?? '',
-        status:       a.status ?? '',
-        reason:       a.reason ?? '',
-        context:      a.context ?? '',
+        apollo_status: apolloStatus,
+        industry:      a.industry ?? '',
+        reason:        a.reason ?? '',
+        context:       a.context ?? '',
       });
     };
 
@@ -548,7 +648,7 @@ function exportCSV() {
   });
 
   if (rows.length === 0) {
-    alert('Brak danych do eksportu. Upewnij się że artykuły mają przypisane osoby kontaktowe.');
+    alert('Brak kontaktów do eksportu.');
     return;
   }
 
@@ -611,8 +711,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event delegation on cards grid
   const cardsEl = document.getElementById('cards');
-  cardsEl.addEventListener('input',  handleEmailInput);
-  cardsEl.addEventListener('click',  handleCopyClick);
+  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); });
+  cardsEl.addEventListener('change', handleApolloCheckbox);
 
   // Event delegation on pagination
   document.getElementById('pagination').addEventListener('click', handlePaginationClick);
