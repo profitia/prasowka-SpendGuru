@@ -159,6 +159,24 @@ function syncDbContactsToLocalStorage() {
   });
 }
 
+/**
+ * Pre-fetches campaign history for every contact that has an email.
+ * Results stored in _historyCache so renderResults() can use them synchronously.
+ * Always called as fire-and-forget (no await at call site).
+ */
+async function preloadCampaignHistory() {
+  if (!apiAvailable || !API_BASE_URL) return;
+  const emailsSeen = new Set();
+  allArticles.forEach(article => {
+    [1, 2].forEach(tier => {
+      const email = getContactEmail(article.id, tier);
+      if (email && email.includes('@')) emailsSeen.add(email.trim().toLowerCase());
+    });
+  });
+  // Parallel fetch — results go into _historyCache via fetchCampaignHistory
+  await Promise.allSettled([...emailsSeen].map(fetchCampaignHistory));
+}
+
 async function loadArticles() {
   let loaded = false;
 
@@ -170,6 +188,7 @@ async function loadArticles() {
         allArticles  = await res.json();
         apiAvailable = true;
         syncDbContactsToLocalStorage();
+        preloadCampaignHistory();  // fire-and-forget
         loaded = true;
       } else {
         console.warn('[API] GET /api/articles zwrócił HTTP', res.status, '— fallback na JSON');
@@ -332,6 +351,22 @@ function renderResults() {
     cardsEl.innerHTML = page.map(renderCard).join('');
   }
 
+  // Restore history flags from cache for visible contacts (non-blocking)
+  page.forEach(article => {
+    [1, 2].forEach(tier => {
+      const email = getContactEmail(article.id, tier);
+      if (!email || !email.includes('@')) return;
+      const key = email.trim().toLowerCase();
+      const cached = _historyCache[key];
+      if (cached) {
+        const el = document.getElementById(`hist_${article.id}_t${tier}`);
+        if (el) el.outerHTML = renderHistoryFlag(article.id, tier, cached);
+      } else if (apiAvailable && API_BASE_URL) {
+        showHistoryForEmail(article.id, tier, email);
+      }
+    });
+  });
+
   renderPagination(total);
 }
 
@@ -482,6 +517,7 @@ function renderPersonBlock(article, tier) {
         </label>
         <span class="apollo-confirm" id="apollo_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
       </div>
+      <div class="history-flag-wrapper" id="hist_${escAttr(article.id)}_t${tier}"></div>
       <div class="command-block" id="cmd_${escAttr(article.id)}_t${tier}">
         ${cmdHtml}
       </div>
@@ -571,6 +607,91 @@ async function postToApi(path, body) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Campaign history
+// ---------------------------------------------------------------------------
+const _historyCache = {};  // email (lowercase) → historyData from API
+
+async function fetchCampaignHistory(email) {
+  if (!apiAvailable || !API_BASE_URL || !email || !email.includes('@')) return null;
+  const key = email.trim().toLowerCase();
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/campaign-history?email=${encodeURIComponent(email)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    _historyCache[key] = data;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function renderHistoryFlag(articleId, tier, historyData) {
+  const wrapperId = `hist_${articleId}_t${tier}`;
+  if (!historyData || historyData.sent_count === 0) {
+    return `<div class="history-flag-wrapper" id="${wrapperId}"></div>`;
+  }
+
+  const count = historyData.sent_count;
+  const flagClass = count >= 2 ? 'history-flag--warn' : 'history-flag--info';
+  const detailsId = `hist_details_${articleId}_t${tier}`;
+
+  const rows = (historyData.items || []).map(it => {
+    const date = it.campaign_run_at
+      ? new Date(it.campaign_run_at).toLocaleDateString('pl-PL', { day:'2-digit', month:'2-digit', year:'numeric' })
+      : '—';
+    const titleHtml = it.article_url
+      ? `<a class="history-item-link" href="${escAttr(it.article_url)}" target="_blank" rel="noopener">${escHtml(it.article_title || it.article_url)}</a>`
+      : escHtml(it.article_title || '—');
+    return `<div class="history-item">
+      <span class="history-item-date">${date}</span>
+      <span class="history-item-company">${escHtml(it.company_name || '—')}</span>
+      <span class="history-item-person">${escHtml(it.full_name || '—')}</span>
+      <span class="history-item-role">${escHtml(it.job_title || '—')}</span>
+      <span class="history-item-article">${titleHtml}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="history-flag-wrapper" id="${wrapperId}">
+    <button class="history-flag ${flagClass}"
+            data-details-id="${escAttr(detailsId)}"
+            aria-expanded="false">
+      ⧔ Wcześniejsze kampanie: ${count}
+    </button>
+    <div class="history-details" id="${detailsId}" hidden>
+      <div class="history-details-header">
+        <span>Data</span><span>Firma</span><span>Osoba</span><span>Stanowisko</span><span>Artykuł</span>
+      </div>
+      ${rows}
+    </div>
+  </div>`;
+}
+
+async function showHistoryForEmail(articleId, tier, email) {
+  const wrapperId = `hist_${articleId}_t${tier}`;
+  const el = document.getElementById(wrapperId);
+  if (!el) return;
+  if (!email || !email.includes('@')) {
+    el.innerHTML = '';
+    return;
+  }
+  const key = email.trim().toLowerCase();
+  let data = _historyCache[key] ?? null;
+  if (!data) data = await fetchCampaignHistory(email);
+  const newHtml = renderHistoryFlag(articleId, tier, data);
+  el.outerHTML = newHtml;
+}
+
+function handleHistoryFlagClick(e) {
+  const btn = e.target.closest('.history-flag');
+  if (!btn) return;
+  const detailsEl = document.getElementById(btn.dataset.detailsId);
+  if (!detailsEl) return;
+  const isHidden = detailsEl.hidden;
+  detailsEl.hidden = !isHidden;
+  btn.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+}
+
 function handleSaveEmail(e) {
   const btn = e.target.closest('.btn-save');
   if (!btn) return;
@@ -621,6 +742,11 @@ function handleSaveEmail(e) {
       confirmEl.textContent = 'Zapisano lokalnie';
       setTimeout(() => { confirmEl.textContent = ''; }, 2500);
     }
+  }
+
+  // Load/refresh campaign history for this email (non-blocking)
+  if (email && email.includes('@')) {
+    showHistoryForEmail(articleId, tier, email);
   }
 }
 
@@ -972,7 +1098,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event delegation on cards grid
   const cardsEl = document.getElementById('cards');
-  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleRunApollo(e); });
+  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleRunApollo(e); handleHistoryFlagClick(e); });
   cardsEl.addEventListener('change', handleApolloCheckbox);
 
   // Event delegation on pagination

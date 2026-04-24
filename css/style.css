@@ -823,6 +823,76 @@ a:hover { text-decoration: underline; }
   font-weight: 500;
 }
 
+/* ─────────────────────────────────────────────
+   Campaign history flag
+   ───────────────────────────────────────────── */
+.history-flag-wrapper {
+  margin-top: 6px;
+  min-height: 0;
+}
+
+.history-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: opacity .15s;
+}
+.history-flag:hover { opacity: .72; }
+
+.history-flag--info  { color: var(--color-accent, #2563eb); border-color: var(--color-accent, #2563eb); }
+.history-flag--warn  { color: #b45309; border-color: #b45309; background: #fef9c320; }
+
+.history-details {
+  margin-top: 6px;
+  border-left: 2px solid var(--color-border, #e5e7eb);
+  padding-left: 10px;
+}
+
+.history-details-header {
+  display: flex;
+  gap: 8px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--color-text-muted, #6b7280);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  margin-bottom: 2px;
+}
+.history-details-header > span { flex: 1; min-width: 0; }
+
+.history-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  padding: 4px 0;
+  font-size: 0.7rem;
+  color: var(--color-text-muted, #6b7280);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+.history-item:last-child { border-bottom: none; }
+
+.history-item-date   { font-weight: 600; white-space: nowrap; flex: 0 0 auto; }
+.history-item-company,
+.history-item-person { flex: 1; min-width: 80px; }
+.history-item-role   { flex: 1; min-width: 80px; color: var(--color-text-muted, #9ca3af); }
+.history-item-article { flex: 2; min-width: 120px; }
+.history-item-link {
+  color: var(--color-accent, #2563eb);
+  text-decoration: none;
+}
+.history-item-link:hover { text-decoration: underline; }
+
 /* Card actions */
 .card-actions {
   display: flex;

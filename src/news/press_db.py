@@ -479,3 +479,173 @@ def update_apollo_status(article_url: str, apollo_status: str) -> Optional[dict]
         log.warning("update_apollo_status: artykuł nie znaleziony dla url=%s", article_url[:60])
         return None
     return _row_to_contact_response(row)
+
+
+# ---------------------------------------------------------------------------
+# Campaign history
+# ---------------------------------------------------------------------------
+
+_CREATE_CAMPAIGN_HISTORY_SQL = """
+CREATE TABLE IF NOT EXISTS apollo.press_campaign_history (
+    id               BIGSERIAL    PRIMARY KEY,
+    email            TEXT         NOT NULL,
+    full_name        TEXT,
+    company_name     TEXT,
+    job_title        TEXT,
+    tier             TEXT,
+    article_url      TEXT,
+    article_title    TEXT,
+    source_name      TEXT,
+    press_type       TEXT,
+    industry         TEXT,
+    campaign_status  TEXT         NOT NULL DEFAULT 'sent',
+    campaign_run_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    raw_payload      JSONB,
+    CONSTRAINT press_campaign_history_email_article_uq
+        UNIQUE (lower(email), article_url)
+);
+
+CREATE INDEX IF NOT EXISTS campaign_history_email_idx
+    ON apollo.press_campaign_history (lower(email));
+
+CREATE INDEX IF NOT EXISTS campaign_history_run_at_idx
+    ON apollo.press_campaign_history (campaign_run_at DESC);
+
+CREATE INDEX IF NOT EXISTS campaign_history_company_idx
+    ON apollo.press_campaign_history (company_name);
+
+CREATE INDEX IF NOT EXISTS campaign_history_full_name_idx
+    ON apollo.press_campaign_history (full_name);
+
+CREATE INDEX IF NOT EXISTS campaign_history_article_url_idx
+    ON apollo.press_campaign_history (article_url);
+"""
+
+_INSERT_CAMPAIGN_HISTORY_SQL = """
+INSERT INTO apollo.press_campaign_history (
+    email, full_name, company_name, job_title, tier,
+    article_url, article_title, source_name, press_type, industry,
+    campaign_status, campaign_run_at
+) VALUES (
+    %(email)s, %(full_name)s, %(company_name)s, %(job_title)s, %(tier)s,
+    %(article_url)s, %(article_title)s, %(source_name)s, %(press_type)s, %(industry)s,
+    %(campaign_status)s, now()
+)
+ON CONFLICT ON CONSTRAINT press_campaign_history_email_article_uq
+DO UPDATE SET
+    campaign_run_at = now(),
+    campaign_status = EXCLUDED.campaign_status,
+    full_name       = EXCLUDED.full_name,
+    company_name    = EXCLUDED.company_name,
+    job_title       = EXCLUDED.job_title,
+    tier            = EXCLUDED.tier,
+    article_title   = EXCLUDED.article_title,
+    source_name     = EXCLUDED.source_name,
+    press_type      = EXCLUDED.press_type,
+    industry        = EXCLUDED.industry
+RETURNING id, email, campaign_run_at
+"""
+
+_LOAD_CAMPAIGN_HISTORY_BY_EMAIL_SQL = """
+SELECT
+    id, email, full_name, company_name, job_title, tier,
+    article_url, article_title, source_name, press_type, industry,
+    campaign_status, campaign_run_at, created_at
+FROM apollo.press_campaign_history
+WHERE lower(email) = lower(%(email)s)
+ORDER BY campaign_run_at DESC
+"""
+
+
+def ensure_campaign_history_table() -> None:
+    """Tworzy tabelę press_campaign_history jeśli nie istnieje (idempotentna)."""
+    with get_connection() as conn:
+        conn.execute(_CREATE_CAMPAIGN_HISTORY_SQL)
+        conn.commit()
+    log.debug("ensure_campaign_history_table: OK")
+
+
+def insert_campaign_history(
+    *,
+    email: str,
+    full_name: str = "",
+    company_name: str = "",
+    job_title: str = "",
+    tier: str = "",
+    article_url: str = "",
+    article_title: str = "",
+    source_name: str = "",
+    press_type: str = "",
+    industry: str = "",
+    campaign_status: str = "sent",
+) -> Optional[dict]:
+    """
+    Zapisuje lub aktualizuje rekord w historii kampanii.
+    UNIQUE (lower(email), article_url) — przy ponownym uruchomieniu dla tej
+    samej kombinacji aktualizuje campaign_run_at zamiast duplikować.
+    """
+    import psycopg.rows  # type: ignore
+
+    params = {
+        "email":           email.strip().lower(),
+        "full_name":       full_name or None,
+        "company_name":    company_name or None,
+        "job_title":       job_title or None,
+        "tier":            tier or None,
+        "article_url":     article_url or None,
+        "article_title":   article_title or None,
+        "source_name":     source_name or None,
+        "press_type":      press_type or None,
+        "industry":        industry or None,
+        "campaign_status": campaign_status,
+    }
+
+    with get_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(_INSERT_CAMPAIGN_HISTORY_SQL, params)
+            row = cur.fetchone()
+        conn.commit()
+
+    log.info(
+        "insert_campaign_history: email=%s article_url=%s id=%s",
+        email[:40], (article_url or "")[:60], row["id"] if row else "?",
+    )
+    return dict(row) if row else None
+
+
+def load_campaign_history_by_email(email: str) -> list[dict]:
+    """
+    Zwraca historię kampanii dla danego emaila (case-insensitive).
+    Wyniki posortowane od najnowszego.
+    """
+    import psycopg.rows  # type: ignore
+
+    if not email or not email.strip():
+        return []
+
+    with get_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(_LOAD_CAMPAIGN_HISTORY_BY_EMAIL_SQL, {"email": email.strip()})
+            rows = cur.fetchall()
+
+    result = []
+    for r in rows:
+        result.append({
+            "id":               r["id"],
+            "email":            r["email"],
+            "full_name":        r["full_name"] or "",
+            "company_name":     r["company_name"] or "",
+            "job_title":        r["job_title"] or "",
+            "tier":             r["tier"] or "",
+            "article_url":      r["article_url"] or "",
+            "article_title":    r["article_title"] or "",
+            "source_name":      r["source_name"] or "",
+            "press_type":       r["press_type"] or "",
+            "industry":         r["industry"] or "",
+            "campaign_status":  r["campaign_status"],
+            "campaign_run_at":  r["campaign_run_at"].isoformat() if r["campaign_run_at"] else "",
+            "created_at":       r["created_at"].isoformat() if r["created_at"] else "",
+        })
+    return result
+

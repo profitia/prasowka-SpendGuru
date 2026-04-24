@@ -32,7 +32,7 @@ _src = Path(__file__).parent.parent
 if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 
@@ -40,6 +40,9 @@ from news.press_db import (
     load_press_articles,
     update_tier_email,
     update_apollo_status,
+    insert_campaign_history,
+    load_campaign_history_by_email,
+    ensure_campaign_history_table,
 )
 
 # ---------------------------------------------------------------------------
@@ -84,6 +87,16 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    """Tworzy tabelę historii kampanii jeśli nie istnieje."""
+    try:
+        ensure_campaign_history_table()
+        log.info("press_campaign_history table OK")
+    except Exception:
+        log.exception("Nie udało się utworzyć tabeli campaign_history przy starcie")
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +335,30 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
             log.info("apollo_status → sent dla %s", body.article_url[:60])
         except Exception:
             log.exception("Nie udało się zaktualizować apollo_status po run-auto")
+
+        # Zapisz do historii kampanii (wzbogać o dane artykułu z DB)
+        try:
+            _articles = load_press_articles()
+            _art_info = next(
+                (a for a in _articles if a.get("source_url") == body.article_url),
+                {},
+            )
+            insert_campaign_history(
+                email=body.email,
+                full_name=body.full_name,
+                company_name=body.company_name or _art_info.get("company", ""),
+                job_title=body.job_title,
+                tier=body.tier,
+                article_url=body.article_url,
+                article_title=_art_info.get("title", ""),
+                source_name=_art_info.get("source_name", ""),
+                press_type=_art_info.get("press_type", ""),
+                industry=_art_info.get("industry", ""),
+                campaign_status="sent",
+            )
+        except Exception:
+            log.exception("Nie udało się zapisać historii kampanii")
+
         return {
             "ok": True,
             "returncode": proc.returncode,
@@ -338,3 +375,49 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
             "stderr_tail": stderr_tail,
             "message": "Nie udało się uruchomić kampanii Apollo. Status przywrócony do Do wysłania.",
         }
+
+
+@app.get("/api/campaign-history")
+async def get_campaign_history(
+    email: str = Query(..., min_length=1, description="Adres email kontaktu"),
+) -> dict:
+    """
+    Zwraca historię kampanii Apollo dla podanego emaila (case-insensitive).
+
+    Query param: email=22@a.pl
+    Zwraca: { email, sent_count, last_sent_at, items: [...] }
+    """
+    email = email.strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=422, detail="Nieprawidłowy format email")
+
+    try:
+        items = load_campaign_history_by_email(email)
+    except (EnvironmentError, ConnectionError) as exc:
+        log.error("Błąd DB w GET /api/campaign-history: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        log.exception("Nieoczekiwany błąd w GET /api/campaign-history")
+        raise HTTPException(status_code=500, detail="Błąd serwera")
+
+    sent_count   = len(items)
+    last_sent_at = items[0]["campaign_run_at"] if items else None
+
+    log.info("campaign-history: email=%s count=%d", email[:40], sent_count)
+    return {
+        "email":        email,
+        "sent_count":   sent_count,
+        "last_sent_at": last_sent_at,
+        "items": [
+            {
+                "campaign_run_at": it["campaign_run_at"],
+                "full_name":       it["full_name"],
+                "company_name":    it["company_name"],
+                "job_title":       it["job_title"],
+                "article_title":   it["article_title"],
+                "article_url":     it["article_url"],
+                "source_name":     it["source_name"],
+            }
+            for it in items
+        ],
+    }
