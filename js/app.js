@@ -363,25 +363,42 @@ function buildCommand(article, fullName, email, tier) {
 }
 
 function renderCommandSection(articleId, tier, email, article) {
-  if (!email || !email.includes('@')) {
-    return `<p class="cmd-hint">Wpisz i zapisz email, aby wygenerować komendę</p>`;
-  }
-
-  const fullName = tier === 1 ? (article.tier1_person ?? '') : (article.tier2_person ?? '');
-  const cmd      = buildCommand(article, fullName, email, tier);
+  const hasEmail  = !!(email && email.includes('@'));
   const confirmId = `copy_confirm_${articleId}_t${tier}`;
+  const previewId = `cmd_preview_${articleId}_t${tier}`;
+
+  let previewHtml = '';
+  if (hasEmail) {
+    const fullName = tier === 1 ? (article.tier1_person ?? '') : (article.tier2_person ?? '');
+    const cmd = buildCommand(article, fullName, email, tier);
+    previewHtml = `
+      <div class="cmd-preview" id="${escAttr(previewId)}" hidden>
+        <pre class="cmd-code"><code>${escHtml(cmd)}</code></pre>
+      </div>`;
+  }
 
   return `
     <div class="cmd-wrapper">
-      <pre class="cmd-code"><code>${escHtml(cmd)}</code></pre>
-      <div class="cmd-footer">
-        <button class="btn-copy"
-          data-article-id="${escAttr(articleId)}"
-          data-tier="${tier}">
-          Kopiuj komendę
+      <div class="apollo-actions">
+        <button class="btn-copy${hasEmail ? '' : ' btn-copy--disabled'}"
+                data-article-id="${escAttr(articleId)}"
+                data-tier="${tier}"
+                ${hasEmail ? '' : 'disabled'}>
+          Kopiuj komendę Apollo
         </button>
-        <span class="copy-confirm" id="${confirmId}" aria-live="polite"></span>
+        ${hasEmail ? `
+        <button class="btn-mark-sent"
+                data-article-id="${escAttr(articleId)}"
+                data-tier="${tier}">
+          Oznacz jako wysłany
+        </button>` : ''}
       </div>
+      ${hasEmail
+        ? `<button class="btn-cmd-toggle"
+                   data-preview-id="${escAttr(previewId)}">▸ Pokaż komendę</button>`
+        : `<span class="cmd-hint">Zapisz email, aby skopiować komendę</span>`}
+      <span class="copy-confirm" id="${confirmId}" aria-live="polite"></span>
+      ${previewHtml}
     </div>`;
 }
 
@@ -631,6 +648,64 @@ function handleApolloCheckbox(e) {
   }
 }
 
+function handleCmdToggle(e) {
+  const btn = e.target.closest('.btn-cmd-toggle');
+  if (!btn) return;
+
+  const previewEl = document.getElementById(btn.dataset.previewId);
+  if (!previewEl) return;
+
+  if (previewEl.hasAttribute('hidden')) {
+    previewEl.removeAttribute('hidden');
+    btn.textContent = '▾ Ukryj komendę';
+  } else {
+    previewEl.setAttribute('hidden', '');
+    btn.textContent = '▸ Pokaż komendę';
+  }
+}
+
+function handleMarkSent(e) {
+  const btn = e.target.closest('.btn-mark-sent');
+  if (!btn) return;
+
+  const articleId = btn.dataset.articleId;
+  const tier      = parseInt(btn.dataset.tier, 10);
+  const article   = allArticles.find(a => a.id === articleId);
+  if (!article) return;
+
+  saveContact(articleId, tier, article, getContact(articleId, tier)?.email ?? '', 'sent');
+
+  // Sync checkbox
+  const cbEl = document.querySelector(`.apollo-checkbox[data-article-id="${articleId}"][data-tier="${tier}"]`);
+  if (cbEl) cbEl.checked = true;
+
+  // Update badge
+  const badgeEl = document.getElementById(`status_badge_${articleId}_t${tier}`);
+  if (badgeEl) {
+    badgeEl.textContent = statusLabel('sent');
+    badgeEl.className   = 'apollo-badge apollo-badge--sent';
+  }
+
+  const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
+
+  if (apiAvailable && API_BASE_URL && article.source_url) {
+    postToApi('/api/articles/status', {
+      article_url:   article.source_url,
+      apollo_status: 'sent',
+    }).then(({ ok }) => {
+      if (confirmEl) {
+        confirmEl.textContent = ok ? 'Oznaczono jako wysłany ✔' : 'Status zaktualizowany';
+        setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+      }
+    });
+  } else {
+    if (confirmEl) {
+      confirmEl.textContent = 'Oznaczono jako wysłany';
+      setTimeout(() => { confirmEl.textContent = ''; }, 2500);
+    }
+  }
+}
+
 function handleCopyClick(e) {
   const btn = e.target.closest('.btn-copy');
   if (!btn) return;
@@ -644,7 +719,7 @@ function handleCopyClick(e) {
   navigator.clipboard.writeText(code.textContent).then(() => {
     const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
     if (confirmEl) {
-      confirmEl.textContent = '✓ Skopiowano';
+      confirmEl.textContent = 'Skopiowano komendę ✔';
       setTimeout(() => { confirmEl.textContent = ''; }, 2000);
     }
   }).catch(() => {
@@ -660,7 +735,7 @@ function handleCopyClick(e) {
 
     const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
     if (confirmEl) {
-      confirmEl.textContent = '✓ Skopiowano';
+      confirmEl.textContent = 'Skopiowano komendę ✔';
       setTimeout(() => { confirmEl.textContent = ''; }, 2000);
     }
   });
@@ -723,7 +798,7 @@ function exportCSV() {
       if (!person) return;
       const contact      = getContact(a.id, tier);
       const email        = contact?.email ?? '';
-      const apolloStatus = contact?.apollo_status ?? 'Nie wysłany';
+      const apolloStatus = contact?.apollo_status ?? 'waiting';
       rows.push({
         article_date:  a.article_date ?? '',
         title:         a.title ?? '',
@@ -809,7 +884,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event delegation on cards grid
   const cardsEl = document.getElementById('cards');
-  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); });
+  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleMarkSent(e); });
   cardsEl.addEventListener('change', handleApolloCheckbox);
 
   // Event delegation on pagination
