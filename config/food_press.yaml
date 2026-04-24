@@ -1,0 +1,81 @@
+# Prasówka spożywcza — konfiguracja
+
+brief_name: food_press
+display_name: "Prasówka spożywcza"
+industry: "spożywcza"
+
+# Adresat codziennego maila
+# Uwaga: ustaw pełny adres email (tu: tomasz.uscinski@profitia.pl)
+recipient_email: tomasz.uscinski@profitia.pl
+
+# Temat maila (do tematu zostanie dołączona data: "Prasówka spożywcza - DD.MM.YYYY")
+subject: "Prasówka spożywcza"
+
+# Liczba artykułów pobieranych z każdego źródła w jednym przebiegu
+max_articles_per_source: 30
+
+# ---------------------------------------------------------------------------
+# Źródła artykułów
+# Dla każdego źródła system próbuje RSS/Atom z podanych ścieżek,
+# a jeśli to nie zadziała — scraping HTML strony głównej.
+# ---------------------------------------------------------------------------
+sources:
+  - name: "Wiadomości Handlowe"
+    url: "https://www.wiadomoscihandlowe.pl"
+    rss_paths:
+      - /feed
+      - /feed/rss
+      - /rss.xml
+      - /rss
+      - /feed.xml
+
+  - name: "Portal Spożywczy"
+    url: "https://www.portalspozywczy.pl"
+    rss_paths:
+      - /feed
+      - /feed/rss
+      - /rss.xml
+      - /rss
+      - /feed.xml
+      - /technologie/feed
+      - /handel/feed
+      - /produkcja/feed
+
+# ---------------------------------------------------------------------------
+# Kryteria kwalifikacji artykułu
+# (używane przez classifier.py — szczegółowa logika tam)
+# ---------------------------------------------------------------------------
+criteria:
+  # Artykuł musi zawierać słowa kluczowe z branży FMCG/spożywczej/produkcyjnej
+  require_fmcg: true
+
+  # Artykuł musi wymieniać osobę z Tier 1 (imię + nazwisko + rola zarządcza)
+  require_tier1_person: true
+
+  # Role uznawane za Tier 1 (lista pomocnicza — logika regex w classifier.py)
+  tier1_roles:
+    - "CEO"
+    - "CFO"
+    - "COO"
+    - "CTO"
+    - "CMO"
+    - "prezes"
+    - "prezes zarządu"
+    - "wiceprezes"
+    - "wiceprezes zarządu"
+    - "członek zarządu"
+    - "właściciel"
+    - "właścicielka"
+    - "założyciel"
+    - "założycielka"
+    - "współzałożyciel"
+    - "founder"
+    - "co-founder"
+    - "managing director"
+    - "general manager"
+    - "dyrektor generalny"
+    - "dyrektor zarządzający"
+    - "dyrektor wykonawczy"
+    - "dyrektor finansowy"
+    - "dyrektor operacyjny"
+    - "partner zarządzający"

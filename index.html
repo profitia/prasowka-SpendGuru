@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pl" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prasówka SpendGuru</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ========== HEADER ========== -->
+  <header class="header">
+    <div class="header-inner container">
+      <div class="header-brand">
+        <h1 class="site-title">Prasówka SpendGuru</h1>
+        <p class="site-subtitle">Artykuły i kontakty do kampanii outbound</p>
+      </div>
+      <div class="header-actions">
+        <label class="dark-toggle" title="Przełącz tryb ciemny">
+          <input type="checkbox" id="darkToggle" aria-label="Tryb ciemny">
+          <span class="toggle-track">
+            <span class="toggle-thumb"></span>
+          </span>
+          <span class="toggle-label">Tryb ciemny</span>
+        </label>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========== TOOLBAR ========== -->
+  <div class="toolbar">
+    <div class="toolbar-inner container">
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="9" cy="9" r="6"/><path d="m15 15 3 3"/>
+        </svg>
+        <input
+          type="search"
+          id="searchInput"
+          class="search-input"
+          placeholder="Szukaj po tytule, firmie, osobie, stanowisku, powodzie, kontekście..."
+          autocomplete="off"
+        >
+      </div>
+      <div class="toolbar-right">
+        <span id="resultsCount" class="results-count">Ładowanie…</span>
+        <button id="exportCsvBtn" class="btn btn-secondary" title="Eksportuj przefiltrowane wyniki do CSV">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+            <path d="M3 17h14M10 3v10m-4-4 4 4 4-4"/>
+          </svg>
+          Eksport CSV
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== LAYOUT ========== -->
+  <div class="layout container">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-inner">
+        <div class="sidebar-header">
+          <h2 class="sidebar-title">Filtry</h2>
+          <button id="resetFilters" class="btn-text" title="Resetuj wszystkie filtry">Resetuj</button>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label" for="filterIndustry">Branża</label>
+          <select id="filterIndustry" class="filter-select">
+            <option value="">Wszystkie branże</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label">Status</label>
+          <div id="filterStatus" class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterStatus" value="new"> Nowy
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterStatus" value="used_in_campaign"> Użyty w kampanii
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterStatus" value="rejected"> Odrzucony
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterStatus" value="to_verify"> Do weryfikacji
+            </label>
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label" for="filterSource">Źródło</label>
+          <select id="filterSource" class="filter-select">
+            <option value="">Wszystkie źródła</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label" for="filterCompany">Firma</label>
+          <input type="text" id="filterCompany" class="filter-input" placeholder="Wyszukaj firmę…">
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label">Tier kontaktu</label>
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterTier" value="has_tier1"> Ma osobę Tier 1
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="filterTier" value="has_tier2"> Ma osobę Tier 2
+            </label>
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label" for="filterDateFrom">Data od</label>
+          <input type="date" id="filterDateFrom" class="filter-input">
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label" for="filterDateTo">Data do</label>
+          <input type="date" id="filterDateTo" class="filter-input">
+        </div>
+
+        <div class="filter-group filter-group--sort">
+          <label class="filter-label" for="sortBy">Sortowanie</label>
+          <select id="sortBy" class="filter-select">
+            <option value="date_desc">Najnowsze najpierw</option>
+            <option value="date_asc">Najstarsze najpierw</option>
+            <option value="company_az">Firma A–Z</option>
+          </select>
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main">
+      <div id="cards" class="cards-grid">
+        <div class="loading-state">
+          <span class="loading-spinner"></span>
+          <p>Ładowanie artykułów…</p>
+        </div>
+      </div>
+      <div id="pagination" class="pagination" role="navigation" aria-label="Paginacja wyników"></div>
+    </main>
+
+  </div><!-- /.layout -->
+
+  <script src="js/app.js"></script>
+</body>
+</html>
