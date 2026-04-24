@@ -417,14 +417,14 @@ function renderCommandSection(articleId, tier, email, article, apolloStatus) {
       </div>`;
   }
 
-  const runLabel    = isSent ? 'Kampania wysłana' : (isRunning ? 'Uruchamianie...' : 'Uruchom kampanię Apollo');
-  const runDisabled = !hasEmail || isSent || isRunning ? 'disabled' : '';
-  const runClass    = `btn-run-apollo${isSent ? ' btn-run-apollo--sent' : ''}${isRunning ? ' btn-run-apollo--running' : ''}${!hasEmail ? ' btn-run-apollo--disabled' : ''}`;
+  const runLabel    = isSent ? 'Wyślij ponownie' : (isRunning ? 'Uruchamianie...' : 'Uruchom kampanię Apollo');
+  const runDisabled = !hasEmail || isRunning ? 'disabled' : '';
+  const runClass    = `btn-run-apollo${isSent ? ' btn-run-apollo--resend' : ''}${isRunning ? ' btn-run-apollo--running' : ''}${!hasEmail ? ' btn-run-apollo--disabled' : ''}`;
   const artUrl      = escAttr(article.source_url ?? '');
 
   const hintHtml = !hasEmail
     ? `<span class="cmd-hint">Zapisz email, aby uruchomić kampanię</span>`
-    : `<span class="cmd-hint cmd-hint--info">${isSent ? 'Kampania uruchomiona. Kopiuj komendę jako fallback.' : isRunning ? 'Pipeline w trakcie uruchamiania...' : 'Uruchom auto pipeline lub skopiuj komendę do terminala.'}</span>
+    : `<span class="cmd-hint cmd-hint--info">${isSent ? 'Kampania wysłana. Kliknij "Wyślij ponownie", aby uruchomić ponownie.' : isRunning ? 'Pipeline w trakcie uruchamiania...' : 'Uruchom auto pipeline lub skopiuj komendę do terminala.'}</span>
            <button class="btn-cmd-toggle"
                    data-preview-id="${escAttr(previewId)}">▸ Pokaż komendę</button>`;
 
@@ -643,8 +643,11 @@ function renderHistoryFlag(articleId, tier, historyData) {
     const titleHtml = it.article_url
       ? `<a class="history-item-link" href="${escAttr(it.article_url)}" target="_blank" rel="noopener">${escHtml(it.article_title || it.article_url)}</a>`
       : escHtml(it.article_title || '—');
+    const runCountHtml = (it.run_count ?? 1) > 1
+      ? ` <span class="history-item-run-count" title="Liczba uruchomień">×${it.run_count}</span>`
+      : '';
     return `<div class="history-item">
-      <span class="history-item-date">${date}</span>
+      <span class="history-item-date">${date}${runCountHtml}</span>
       <span class="history-item-company">${escHtml(it.company_name || '—')}</span>
       <span class="history-item-person">${escHtml(it.full_name || '—')}</span>
       <span class="history-item-role">${escHtml(it.job_title || '—')}</span>
@@ -884,8 +887,9 @@ async function handleRunApollo(e) {
   const contact = getContact(articleId, tier);
   if (!contact?.email) return;
 
-  const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
-  const origLabel = btn.textContent.trim();
+  const confirmEl  = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
+  const origLabel  = btn.textContent.trim();
+  const prevStatus = contact.apollo_status ?? 'waiting';  // zapamiętaj przed zmianą
 
   btn.disabled    = true;
   btn.textContent = 'Uruchamianie...';
@@ -934,22 +938,32 @@ async function handleRunApollo(e) {
     _markSentInUI(articleId, tier, article);
     const cmdEl = document.getElementById(`cmd_${articleId}_t${tier}`);
     if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tier, contact.email, article, 'sent');
+    const successMsg = result.message
+      || (prevStatus === 'sent'
+          ? 'Kampania Apollo uruchomiona ponownie ✔'
+          : 'Kampania Apollo uruchomiona ✔');
     if (confirmEl) {
-      confirmEl.textContent = result.message || 'Kampania Apollo uruchomiona ✔';
+      confirmEl.textContent = successMsg;
       setTimeout(() => { confirmEl.textContent = ''; }, 4000);
     }
+    // Odśwież historię (nowy wpis lub aktualizacja run_count)
+    if (contact.email && contact.email.includes('@')) {
+      delete _historyCache[contact.email.trim().toLowerCase()];
+      showHistoryForEmail(articleId, tier, contact.email);
+    }
   } else {
-    // Revert do waiting lokalnie
-    saveContact(articleId, tier, article, contact.email, 'waiting');
+    // Revert do poprzedniego statusu (waiting lub sent)
+    const revertStatus = prevStatus === 'sent' ? 'sent' : 'waiting';
+    saveContact(articleId, tier, article, contact.email, revertStatus);
     const cmdElErr = document.getElementById(`cmd_${articleId}_t${tier}`);
-    if (cmdElErr) cmdElErr.innerHTML = renderCommandSection(articleId, tier, contact.email, article, 'waiting');
+    if (cmdElErr) cmdElErr.innerHTML = renderCommandSection(articleId, tier, contact.email, article, revertStatus);
     const badgeElErr = document.getElementById(`status_badge_${articleId}_t${tier}`);
     if (badgeElErr) {
-      badgeElErr.textContent = statusLabel('waiting');
-      badgeElErr.className   = 'apollo-badge apollo-badge--unsent';
+      badgeElErr.textContent = statusLabel(revertStatus);
+      badgeElErr.className   = `apollo-badge apollo-badge--${revertStatus === 'sent' ? 'sent' : 'unsent'}`;
     }
     if (confirmEl) {
-      confirmEl.textContent = result.message || 'Nie udało się uruchomić kampanii Apollo. Status przywrócony do Do wysłania.';
+      confirmEl.textContent = result.message || 'Nie udało się uruchomić kampanii Apollo. Status przywrócony.';
       setTimeout(() => { confirmEl.textContent = ''; }, 5000);
     }
   }

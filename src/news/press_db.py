@@ -504,8 +504,14 @@ _CREATE_CAMPAIGN_HISTORY_STMTS: list[str] = [
         campaign_status  TEXT         NOT NULL DEFAULT 'sent',
         campaign_run_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
         created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        run_count        INT          NOT NULL DEFAULT 1,
         raw_payload      JSONB
     )
+    """,
+    # run_count dla istniejących tabel (idempotentna)
+    """
+    ALTER TABLE apollo.press_campaign_history
+        ADD COLUMN IF NOT EXISTS run_count INT NOT NULL DEFAULT 1
     """,
     # Unikalny expression index (jedyna poprawna składnia dla lower(email))
     """
@@ -538,16 +544,17 @@ _INSERT_CAMPAIGN_HISTORY_SQL = """
 INSERT INTO apollo.press_campaign_history (
     email, full_name, company_name, job_title, tier,
     article_url, article_title, source_name, press_type, industry,
-    campaign_status, campaign_run_at
+    campaign_status, campaign_run_at, run_count
 ) VALUES (
     %(email)s, %(full_name)s, %(company_name)s, %(job_title)s, %(tier)s,
     %(article_url)s, %(article_title)s, %(source_name)s, %(press_type)s, %(industry)s,
-    %(campaign_status)s, now()
+    %(campaign_status)s, now(), 1
 )
 ON CONFLICT (lower(email), article_url)
 DO UPDATE SET
     campaign_run_at = now(),
     campaign_status = EXCLUDED.campaign_status,
+    run_count       = apollo.press_campaign_history.run_count + 1,
     full_name       = EXCLUDED.full_name,
     company_name    = EXCLUDED.company_name,
     job_title       = EXCLUDED.job_title,
@@ -556,14 +563,14 @@ DO UPDATE SET
     source_name     = EXCLUDED.source_name,
     press_type      = EXCLUDED.press_type,
     industry        = EXCLUDED.industry
-RETURNING id, email, campaign_run_at
+RETURNING id, email, campaign_run_at, run_count
 """
 
 _LOAD_CAMPAIGN_HISTORY_BY_EMAIL_SQL = """
 SELECT
     id, email, full_name, company_name, job_title, tier,
     article_url, article_title, source_name, press_type, industry,
-    campaign_status, campaign_run_at, created_at
+    campaign_status, campaign_run_at, created_at, run_count
 FROM apollo.press_campaign_history
 WHERE lower(email) = lower(%(email)s)
 ORDER BY campaign_run_at DESC
@@ -621,8 +628,8 @@ def insert_campaign_history(
         conn.commit()
 
     log.info(
-        "insert_campaign_history: email=%s article_url=%s id=%s",
-        email[:40], (article_url or "")[:60], row["id"] if row else "?",
+        "insert_campaign_history: email=%s article_url=%s id=%s run_count=%s",
+        email[:40], (article_url or "")[:60], row["id"] if row else "?", row["run_count"] if row else "?",
     )
     return dict(row) if row else None
 
@@ -657,6 +664,7 @@ def load_campaign_history_by_email(email: str) -> list[dict]:
             "press_type":       r["press_type"] or "",
             "industry":         r["industry"] or "",
             "campaign_status":  r["campaign_status"],
+            "run_count":        r["run_count"] if r["run_count"] is not None else 1,
             "campaign_run_at":  r["campaign_run_at"].isoformat() if r["campaign_run_at"] else "",
             "created_at":       r["created_at"].isoformat() if r["created_at"] else "",
         })

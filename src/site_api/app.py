@@ -400,10 +400,10 @@ async def get_campaign_history(
         log.exception("Nieoczekiwany błąd w GET /api/campaign-history")
         raise HTTPException(status_code=500, detail="Błąd serwera")
 
-    sent_count   = len(items)
+    sent_count   = sum(it.get("run_count", 1) for it in items)
     last_sent_at = items[0]["campaign_run_at"] if items else None
 
-    log.info("campaign-history: email=%s count=%d", email[:40], sent_count)
+    log.info("campaign-history: email=%s sent_count=%d rows=%d", email[:40], sent_count, len(items))
     return {
         "email":        email,
         "sent_count":   sent_count,
@@ -417,6 +417,7 @@ async def get_campaign_history(
                 "article_title":   it["article_title"],
                 "article_url":     it["article_url"],
                 "source_name":     it["source_name"],
+                "run_count":       it.get("run_count", 1),
             }
             for it in items
         ],

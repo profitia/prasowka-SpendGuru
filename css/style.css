@@ -773,6 +773,30 @@ a:hover { text-decoration: underline; }
   opacity: .7;
 }
 
+/* Ponowna wysyłka — aktywny przycisk dla statusu sent */
+.btn-run-apollo--resend {
+  background: var(--color-green);
+  opacity: 1;
+}
+.btn-run-apollo--resend:hover:not(:disabled) {
+  background: #16a34a;
+  opacity: .9;
+}
+
+/* run_count badge w historii */
+.history-item-run-count {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: #b45309;
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 4px;
+  vertical-align: middle;
+  letter-spacing: .02em;
+}
+
 .btn-run-apollo--running {
   background: var(--color-accent-hover, #1a5fbd);
   opacity: .85;
