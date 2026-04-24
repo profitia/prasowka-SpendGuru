@@ -112,8 +112,8 @@ ON CONFLICT (article_url) DO UPDATE SET
         ELSE EXCLUDED.tier2_email
     END,
     apollo_status = CASE
-        WHEN apollo.press_articles.apollo_status = 'sent'
-        THEN 'sent'
+        WHEN apollo.press_articles.apollo_status IN ('sent', 'running')
+        THEN apollo.press_articles.apollo_status
         ELSE 'waiting'
     END,
     updated_at = now()
@@ -415,7 +415,7 @@ def _row_to_contact_response(row: dict) -> dict:
         "article_url":   row["article_url"],
         "tier1_email":   row.get("tier1_email") or "",
         "tier2_email":   row.get("tier2_email") or "",
-        "apollo_status": row.get("apollo_status") or "Nie wysłany",
+        "apollo_status": row.get("apollo_status") or "waiting",
         "updated_at":    row["updated_at"].isoformat() if row.get("updated_at") else "",
     }
 
@@ -448,9 +448,17 @@ def update_tier_email(article_url: str, tier: str, email: str) -> Optional[dict]
 def update_apollo_status(article_url: str, apollo_status: str) -> Optional[dict]:
     """
     Aktualizuje apollo_status dla artykułu.
+    Dozwolone wartości: waiting, running, sent.
     Zwraca zaktualizowany rekord lub None jeśli artykuł nie znaleziony.
     """
     import psycopg.rows  # type: ignore
+
+    allowed = {"waiting", "running", "sent"}
+    if apollo_status not in allowed:
+        raise ValueError(
+            f"Nieprawidłowy apollo_status: {apollo_status!r}. "
+            f"Dozwolone: {sorted(allowed)}"
+        )
 
     with get_connection() as conn:
         with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
@@ -459,8 +467,15 @@ def update_apollo_status(article_url: str, apollo_status: str) -> Optional[dict]
                 {"apollo_status": apollo_status, "article_url": article_url},
             )
             row = cur.fetchone()
+            rowcount = cur.rowcount
         conn.commit()
 
+    log.info(
+        "update_apollo_status: url=%s status=%s rowcount=%d",
+        article_url[:60], apollo_status, rowcount,
+    )
+
     if row is None:
+        log.warning("update_apollo_status: artykuł nie znaleziony dla url=%s", article_url[:60])
         return None
     return _row_to_contact_response(row)

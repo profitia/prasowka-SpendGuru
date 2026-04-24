@@ -77,7 +77,9 @@ function debounce(fn, ms) {
 // ============================================================
 
 function statusLabel(status) {
-  return status === 'sent' ? 'Wysłany' : 'Do wysłania';
+  if (status === 'sent')    return 'Wysłany';
+  if (status === 'running') return 'Uruchamianie';
+  return 'Do wysłania';
 }
 
 function contactKey(articleId, tier) {
@@ -366,6 +368,7 @@ function renderCommandSection(articleId, tier, email, article, apolloStatus) {
   apolloStatus    = apolloStatus ?? 'waiting';
   const hasEmail  = !!(email && email.includes('@'));
   const isSent    = apolloStatus === 'sent';
+  const isRunning = apolloStatus === 'running';
   const confirmId = `copy_confirm_${articleId}_t${tier}`;
   const previewId = `cmd_preview_${articleId}_t${tier}`;
 
@@ -379,14 +382,14 @@ function renderCommandSection(articleId, tier, email, article, apolloStatus) {
       </div>`;
   }
 
-  const runLabel    = isSent ? 'Kampania wysłana' : 'Uruchom kampanię Apollo';
-  const runDisabled = !hasEmail || isSent ? 'disabled' : '';
-  const runClass    = `btn-run-apollo${isSent ? ' btn-run-apollo--sent' : ''}${!hasEmail ? ' btn-run-apollo--disabled' : ''}`;
+  const runLabel    = isSent ? 'Kampania wysłana' : (isRunning ? 'Uruchamianie...' : 'Uruchom kampanię Apollo');
+  const runDisabled = !hasEmail || isSent || isRunning ? 'disabled' : '';
+  const runClass    = `btn-run-apollo${isSent ? ' btn-run-apollo--sent' : ''}${isRunning ? ' btn-run-apollo--running' : ''}${!hasEmail ? ' btn-run-apollo--disabled' : ''}`;
   const artUrl      = escAttr(article.source_url ?? '');
 
   const hintHtml = !hasEmail
     ? `<span class="cmd-hint">Zapisz email, aby uruchomić kampanię</span>`
-    : `<span class="cmd-hint cmd-hint--info">${isSent ? 'Kampania uruchomiona. Kopiuj komendę jako fallback.' : 'Uruchom auto pipeline lub skopiuj komendę do terminala.'}</span>
+    : `<span class="cmd-hint cmd-hint--info">${isSent ? 'Kampania uruchomiona. Kopiuj komendę jako fallback.' : isRunning ? 'Pipeline w trakcie uruchamiania...' : 'Uruchom auto pipeline lub skopiuj komendę do terminala.'}</span>
            <button class="btn-cmd-toggle"
                    data-preview-id="${escAttr(previewId)}">▸ Pokaż komendę</button>`;
 
@@ -429,7 +432,9 @@ function renderPersonBlock(article, tier) {
   const isChecked    = apolloStatus === 'sent' ? 'checked' : '';
   const tierClass    = tier === 1 ? 'tier1' : 'tier2';
   const inputId      = `email_${escAttr(article.id)}_t${tier}`;
-  const badgeClass   = apolloStatus === 'sent' ? 'apollo-badge--sent' : 'apollo-badge--unsent';
+  const badgeClass   = apolloStatus === 'sent' ? 'apollo-badge--sent'
+    : apolloStatus === 'running' ? 'apollo-badge--running'
+    : 'apollo-badge--unsent';
   const cmdHtml      = renderCommandSection(article.id, tier, savedEmail, article, apolloStatus);
 
   return `
@@ -703,39 +708,23 @@ function handleCopyClick(e) {
 
   const confirmEl = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
 
-  function doMarkSent() {
-    _markSentInUI(articleId, tier, article);
+  function onCopied() {
+    if (confirmEl) {
+      confirmEl.textContent = 'Skopiowano komendę ✔';
+      setTimeout(() => { confirmEl.textContent = ''; }, 3000);
+    }
+  }
 
-    if (apiAvailable && API_BASE_URL && article.source_url) {
-      postToApi('/api/articles/status', {
-        article_url:   article.source_url,
-        apollo_status: 'sent',
-      }).then(({ ok }) => {
-        if (confirmEl) {
-          confirmEl.textContent = ok
-            ? 'Skopiowano i oznaczono jako wysłany ✔'
-            : 'Skopiowano komendę, ale nie udało się oznaczyć jako wysłany';
-          setTimeout(() => { confirmEl.textContent = ''; }, 3500);
-        }
-      });
-    } else {
-      if (confirmEl) {
-        confirmEl.textContent = 'Skopiowano i oznaczono lokalnie jako wysłany ✔';
-        setTimeout(() => { confirmEl.textContent = ''; }, 3000);
-      }
+  function onError() {
+    if (confirmEl) {
+      confirmEl.textContent = 'Błąd kopiowania — spróbuj ręcznie';
+      setTimeout(() => { confirmEl.textContent = ''; }, 3000);
     }
   }
 
   // Try modern clipboard API first
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(code.textContent).then(() => {
-      doMarkSent();
-    }).catch(() => {
-      if (confirmEl) {
-        confirmEl.textContent = 'Błąd kopiowania — spróbuj ręcznie';
-        setTimeout(() => { confirmEl.textContent = ''; }, 3000);
-      }
-    });
+    navigator.clipboard.writeText(code.textContent).then(onCopied).catch(onError);
   } else {
     // Fallback execCommand
     try {
@@ -747,12 +736,9 @@ function handleCopyClick(e) {
       ta.select();
       document.execCommand('copy');
       document.body.removeChild(ta);
-      doMarkSent();
+      onCopied();
     } catch {
-      if (confirmEl) {
-        confirmEl.textContent = 'Błąd kopiowania — spróbuj ręcznie';
-        setTimeout(() => { confirmEl.textContent = ''; }, 3000);
-      }
+      onError();
     }
   }
 }
@@ -776,8 +762,18 @@ async function handleRunApollo(e) {
   const origLabel = btn.textContent.trim();
 
   btn.disabled    = true;
-  btn.textContent = 'Uruchamiam kampanię...';
+  btn.textContent = 'Uruchamianie...';
   if (confirmEl) confirmEl.textContent = '';
+
+  // Ustaw running w lokalnym cache i odśwież badge / blok
+  saveContact(articleId, tier, article, contact.email, 'running');
+  const cmdElRun = document.getElementById(`cmd_${articleId}_t${tier}`);
+  if (cmdElRun) cmdElRun.innerHTML = renderCommandSection(articleId, tier, contact.email, article, 'running');
+  const badgeElRun = document.getElementById(`status_badge_${articleId}_t${tier}`);
+  if (badgeElRun) {
+    badgeElRun.textContent = statusLabel('running');
+    badgeElRun.className   = 'apollo-badge apollo-badge--running';
+  }
 
   const body = {
     article_url:  article.source_url ?? '',
@@ -817,10 +813,17 @@ async function handleRunApollo(e) {
       setTimeout(() => { confirmEl.textContent = ''; }, 4000);
     }
   } else {
-    btn.disabled    = false;
-    btn.textContent = origLabel;
+    // Revert do waiting lokalnie
+    saveContact(articleId, tier, article, contact.email, 'waiting');
+    const cmdElErr = document.getElementById(`cmd_${articleId}_t${tier}`);
+    if (cmdElErr) cmdElErr.innerHTML = renderCommandSection(articleId, tier, contact.email, article, 'waiting');
+    const badgeElErr = document.getElementById(`status_badge_${articleId}_t${tier}`);
+    if (badgeElErr) {
+      badgeElErr.textContent = statusLabel('waiting');
+      badgeElErr.className   = 'apollo-badge apollo-badge--unsent';
+    }
     if (confirmEl) {
-      confirmEl.textContent = result.message || 'Nie udało się uruchomić kampanii Apollo';
+      confirmEl.textContent = result.message || 'Nie udało się uruchomić kampanii Apollo. Status przywrócony do Do wysłania.';
       setTimeout(() => { confirmEl.textContent = ''; }, 5000);
     }
   }

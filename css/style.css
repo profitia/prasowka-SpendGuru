@@ -773,6 +773,32 @@ a:hover { text-decoration: underline; }
   opacity: .7;
 }
 
+.btn-run-apollo--running {
+  background: var(--color-accent-hover, #1a5fbd);
+  opacity: .85;
+  cursor: not-allowed;
+  position: relative;
+  padding-left: 30px;
+}
+
+.btn-run-apollo--running::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin-apollo .75s linear infinite;
+}
+
+@keyframes spin-apollo {
+  to { transform: translateY(-50%) rotate(360deg); }
+}
+
 .btn-cmd-toggle {
   background: none;
   border: none;
@@ -924,6 +950,11 @@ a:hover { text-decoration: underline; }
 .apollo-badge--sent {
   background: var(--color-green-bg);
   color: var(--color-green);
+}
+
+.apollo-badge--running {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .apollo-badge--unsent {

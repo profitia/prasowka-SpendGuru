@@ -118,7 +118,7 @@ class StatusRequest(BaseModel):
     @field_validator("apollo_status")
     @classmethod
     def validate_status(cls, v: str) -> str:
-        allowed = {"waiting", "sent"}
+        allowed = {"waiting", "running", "sent"}
         if v not in allowed:
             raise ValueError(f"apollo_status musi być jednym z: {allowed}")
         return v
@@ -244,6 +244,14 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
         "POST /api/apollo/run-auto: %s (tier=%s, email=%s)",
         body.article_url[:80], body.tier, body.email,
     )
+
+    # Niezwłocznie oznacz jako running
+    try:
+        update_apollo_status(body.article_url, "running")
+        log.info("apollo_status → running dla %s", body.article_url[:60])
+    except Exception:
+        log.warning("Nie udało się ustawić running przed subprocess (ignorujem)")
+
     cmd = [
         APOLLO_PYTHON,
         "src/news/orchestrator.py",
@@ -252,6 +260,14 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
         "--single-article-url", body.article_url,
         "--verbose",
     ]
+
+    def _revert_to_waiting() -> None:
+        try:
+            update_apollo_status(body.article_url, "waiting")
+            log.info("apollo_status → waiting (revert) dla %s", body.article_url[:60])
+        except Exception:
+            log.exception("Nie udało się zrevertować apollo_status do waiting")
+
     try:
         proc = subprocess.run(
             cmd,
@@ -262,30 +278,33 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
         )
     except subprocess.TimeoutExpired:
         log.error("Timeout subprocess dla: %s", body.article_url[:80])
+        _revert_to_waiting()
         return {
             "ok": False,
             "returncode": -1,
             "stdout_tail": "",
             "stderr_tail": "",
-            "message": f"Timeout — pipeline trwał ponad {APOLLO_TIMEOUT}s",
+            "message": f"Timeout — pipeline trwał ponad {APOLLO_TIMEOUT}s. Status przywrócony do Do wysłania.",
         }
     except FileNotFoundError as exc:
         log.error("Nie znaleziono interpretera lub orchestratora: %s", exc)
+        _revert_to_waiting()
         return {
             "ok": False,
             "returncode": -1,
             "stdout_tail": "",
             "stderr_tail": str(exc),
-            "message": "Nie znaleziono interpretera Python lub orchestratora",
+            "message": "Nie znaleziono interpretera Python lub orchestratora. Status przywrócony do Do wysłania.",
         }
     except Exception as exc:
         log.exception("Błąd subprocess w /api/apollo/run-auto")
+        _revert_to_waiting()
         return {
             "ok": False,
             "returncode": -1,
             "stdout_tail": "",
             "stderr_tail": str(exc),
-            "message": "Błąd uruchomienia pipeline'u",
+            "message": f"Błąd uruchomienia pipeline'u. Status przywrócony do Do wysłania.",
         }
 
     stdout_tail = "\n".join(proc.stdout.splitlines()[-30:]) if proc.stdout else ""
@@ -303,11 +322,19 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
             log.info("apollo_status → sent dla %s", body.article_url[:60])
         except Exception:
             log.exception("Nie udało się zaktualizować apollo_status po run-auto")
-
-    return {
-        "ok": ok,
-        "returncode": proc.returncode,
-        "stdout_tail": stdout_tail,
-        "stderr_tail": stderr_tail,
-        "message": "Kampania Apollo uruchomiona ✔" if ok else "Nie udało się uruchomić kampanii Apollo",
-    }
+        return {
+            "ok": True,
+            "returncode": proc.returncode,
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
+            "message": "Kampania Apollo uruchomiona ✔",
+        }
+    else:
+        _revert_to_waiting()
+        return {
+            "ok": False,
+            "returncode": proc.returncode,
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
+            "message": "Nie udało się uruchomić kampanii Apollo. Status przywrócony do Do wysłania.",
+        }
