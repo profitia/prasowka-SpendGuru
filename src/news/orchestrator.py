@@ -38,7 +38,7 @@ from news.sources import get_article_urls        # noqa: E402
 from news.scraper import fetch_article           # noqa: E402
 from news.classifier import classify_article     # noqa: E402
 from news.storage import NewsStorage             # noqa: E402
-from news.email_sender import send_email         # noqa: E402
+# email_sender imported lazily only when actually sending (avoids msal dependency in CI)
 
 log = logging.getLogger("prasowka.orchestrator")
 
@@ -382,6 +382,7 @@ def run_brief(
         log.info("[%s] Mail NIE wysłany. Podgląd zapisany: %s", reason, preview_path)
     else:
         log.info("Wysyłam mail do: %s (temat: %s)", recipient, subject)
+        from news.email_sender import send_email  # lazy import — msal needed only here
         send_email(recipient, subject, html)
 
 
