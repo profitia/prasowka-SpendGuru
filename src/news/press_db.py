@@ -485,42 +485,54 @@ def update_apollo_status(article_url: str, apollo_status: str) -> Optional[dict]
 # Campaign history
 # ---------------------------------------------------------------------------
 
-_CREATE_CAMPAIGN_HISTORY_SQL = """
-CREATE TABLE IF NOT EXISTS apollo.press_campaign_history (
-    id               BIGSERIAL    PRIMARY KEY,
-    email            TEXT         NOT NULL,
-    full_name        TEXT,
-    company_name     TEXT,
-    job_title        TEXT,
-    tier             TEXT,
-    article_url      TEXT,
-    article_title    TEXT,
-    source_name      TEXT,
-    press_type       TEXT,
-    industry         TEXT,
-    campaign_status  TEXT         NOT NULL DEFAULT 'sent',
-    campaign_run_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    raw_payload      JSONB,
-    CONSTRAINT press_campaign_history_email_article_uq
-        UNIQUE (lower(email), article_url)
-);
-
-CREATE INDEX IF NOT EXISTS campaign_history_email_idx
-    ON apollo.press_campaign_history (lower(email));
-
-CREATE INDEX IF NOT EXISTS campaign_history_run_at_idx
-    ON apollo.press_campaign_history (campaign_run_at DESC);
-
-CREATE INDEX IF NOT EXISTS campaign_history_company_idx
-    ON apollo.press_campaign_history (company_name);
-
-CREATE INDEX IF NOT EXISTS campaign_history_full_name_idx
-    ON apollo.press_campaign_history (full_name);
-
-CREATE INDEX IF NOT EXISTS campaign_history_article_url_idx
-    ON apollo.press_campaign_history (article_url);
-"""
+# Rozbite na osobne statement-y — psycopg v3 nie obsługuje multi-statement w jednym execute().
+_CREATE_CAMPAIGN_HISTORY_STMTS: list[str] = [
+    # Tabela bez expression constraint (Postgres nie obsługuje UNIQUE(expr) inline)
+    """
+    CREATE TABLE IF NOT EXISTS apollo.press_campaign_history (
+        id               BIGSERIAL    PRIMARY KEY,
+        email            TEXT         NOT NULL,
+        full_name        TEXT,
+        company_name     TEXT,
+        job_title        TEXT,
+        tier             TEXT,
+        article_url      TEXT,
+        article_title    TEXT,
+        source_name      TEXT,
+        press_type       TEXT,
+        industry         TEXT,
+        campaign_status  TEXT         NOT NULL DEFAULT 'sent',
+        campaign_run_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+        raw_payload      JSONB
+    )
+    """,
+    # Unikalny expression index (jedyna poprawna składnia dla lower(email))
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_press_campaign_history_email_article
+        ON apollo.press_campaign_history (lower(email), article_url)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS campaign_history_email_idx
+        ON apollo.press_campaign_history (lower(email))
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS campaign_history_run_at_idx
+        ON apollo.press_campaign_history (campaign_run_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS campaign_history_company_idx
+        ON apollo.press_campaign_history (company_name)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS campaign_history_full_name_idx
+        ON apollo.press_campaign_history (full_name)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS campaign_history_article_url_idx
+        ON apollo.press_campaign_history (article_url)
+    """,
+]
 
 _INSERT_CAMPAIGN_HISTORY_SQL = """
 INSERT INTO apollo.press_campaign_history (
@@ -532,7 +544,7 @@ INSERT INTO apollo.press_campaign_history (
     %(article_url)s, %(article_title)s, %(source_name)s, %(press_type)s, %(industry)s,
     %(campaign_status)s, now()
 )
-ON CONFLICT ON CONSTRAINT press_campaign_history_email_article_uq
+ON CONFLICT (lower(email), article_url)
 DO UPDATE SET
     campaign_run_at = now(),
     campaign_status = EXCLUDED.campaign_status,
@@ -561,7 +573,8 @@ ORDER BY campaign_run_at DESC
 def ensure_campaign_history_table() -> None:
     """Tworzy tabelę press_campaign_history jeśli nie istnieje (idempotentna)."""
     with get_connection() as conn:
-        conn.execute(_CREATE_CAMPAIGN_HISTORY_SQL)
+        for stmt in _CREATE_CAMPAIGN_HISTORY_STMTS:
+            conn.execute(stmt)
         conn.commit()
     log.debug("ensure_campaign_history_table: OK")
 

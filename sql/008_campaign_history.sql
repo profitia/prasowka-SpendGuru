@@ -18,10 +18,12 @@ CREATE TABLE IF NOT EXISTS apollo.press_campaign_history (
     campaign_status  TEXT         NOT NULL DEFAULT 'sent',
     campaign_run_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    raw_payload      JSONB,
-    CONSTRAINT press_campaign_history_email_article_uq
-        UNIQUE (lower(email), article_url)
+    raw_payload      JSONB
 );
+
+-- Expression-based unique index (Postgres nie obsługuje expression UNIQUE inline w CREATE TABLE)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_press_campaign_history_email_article
+    ON apollo.press_campaign_history (lower(email), article_url);
 
 CREATE INDEX IF NOT EXISTS campaign_history_email_idx
     ON apollo.press_campaign_history (lower(email));
