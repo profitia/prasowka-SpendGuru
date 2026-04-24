@@ -160,6 +160,26 @@ function syncDbContactsToLocalStorage() {
 }
 
 /**
+ * Synchronously refreshes history flag elements for all currently visible
+ * contacts that already have data in _historyCache.
+ * Call after cache population or after any re-render that may reset flag elements.
+ */
+function _refreshVisibleHistoryFlags() {
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const end   = Math.min(start + PAGE_SIZE, filteredArticles.length);
+  filteredArticles.slice(start, end).forEach(article => {
+    [1, 2].forEach(tier => {
+      const email = getContactEmail(article.id, tier);
+      if (!email || !email.includes('@')) return;
+      const cached = _historyCache[email.trim().toLowerCase()];
+      if (!cached) return;
+      const el = document.getElementById(`hist_${article.id}_t${tier}`);
+      if (el) el.outerHTML = renderHistoryFlag(article.id, tier, cached);
+    });
+  });
+}
+
+/**
  * Pre-fetches campaign history for every contact that has an email.
  * Results stored in _historyCache so renderResults() can use them synchronously.
  * Always called as fire-and-forget (no await at call site).
@@ -175,6 +195,8 @@ async function preloadCampaignHistory() {
   });
   // Parallel fetch — results go into _historyCache via fetchCampaignHistory
   await Promise.allSettled([...emailsSeen].map(fetchCampaignHistory));
+  // Cache is now fully populated — update any visible flags in the DOM
+  _refreshVisibleHistoryFlags();
 }
 
 async function loadArticles() {
@@ -351,21 +373,19 @@ function renderResults() {
     cardsEl.innerHTML = page.map(renderCard).join('');
   }
 
-  // Restore history flags from cache for visible contacts (non-blocking)
-  page.forEach(article => {
-    [1, 2].forEach(tier => {
-      const email = getContactEmail(article.id, tier);
-      if (!email || !email.includes('@')) return;
-      const key = email.trim().toLowerCase();
-      const cached = _historyCache[key];
-      if (cached) {
-        const el = document.getElementById(`hist_${article.id}_t${tier}`);
-        if (el) el.outerHTML = renderHistoryFlag(article.id, tier, cached);
-      } else if (apiAvailable && API_BASE_URL) {
-        showHistoryForEmail(article.id, tier, email);
-      }
+  // Restore history flags — from cache (sync) then fetch missing ones (async)
+  _refreshVisibleHistoryFlags();
+  if (apiAvailable && API_BASE_URL) {
+    page.forEach(article => {
+      [1, 2].forEach(tier => {
+        const email = getContactEmail(article.id, tier);
+        if (!email || !email.includes('@')) return;
+        if (!_historyCache[email.trim().toLowerCase()]) {
+          showHistoryForEmail(article.id, tier, email);
+        }
+      });
     });
-  });
+  }
 
   renderPagination(total);
 }
@@ -672,17 +692,19 @@ function renderHistoryFlag(articleId, tier, historyData) {
 
 async function showHistoryForEmail(articleId, tier, email) {
   const wrapperId = `hist_${articleId}_t${tier}`;
-  const el = document.getElementById(wrapperId);
-  if (!el) return;
   if (!email || !email.includes('@')) {
-    el.innerHTML = '';
+    const el = document.getElementById(wrapperId);
+    if (el) el.innerHTML = '';
     return;
   }
   const key = email.trim().toLowerCase();
   let data = _historyCache[key] ?? null;
   if (!data) data = await fetchCampaignHistory(email);
-  const newHtml = renderHistoryFlag(articleId, tier, data);
-  el.outerHTML = newHtml;
+  // Re-query element AFTER the async fetch — the DOM may have been re-rendered
+  // during the await (e.g. filter change), making any pre-fetch reference stale.
+  const el = document.getElementById(wrapperId);
+  if (!el) return;
+  el.outerHTML = renderHistoryFlag(articleId, tier, data);
 }
 
 function handleHistoryFlagClick(e) {
