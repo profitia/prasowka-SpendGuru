@@ -61,6 +61,20 @@ function formatDate(str) {
   }
 }
 
+function formatDateTime(dateStr, tsStr) {
+  // dateStr  — article_date (DATE, np. "2026-04-27")
+  // tsStr    — created_at  (TIMESTAMPTZ, np. "2026-04-27T06:12:34.123+00:00")
+  const datePart = formatDate(dateStr);
+  if (!tsStr) return datePart;
+  try {
+    const t = new Date(tsStr);
+    const time = t.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    return datePart ? `${datePart}, ${time}` : time;
+  } catch {
+    return datePart;
+  }
+}
+
 function parseName(fullName) {
   const parts = String(fullName ?? '').trim().split(/\s+/);
   return { first: parts[0] ?? '', last: parts.slice(1).join(' ') };
@@ -569,7 +583,7 @@ function renderPersonBlock(article, tier) {
 // ============================================================
 
 function renderCard(article) {
-  const dateStr   = formatDate(article.article_date);
+  const dateStr   = formatDateTime(article.article_date, article.created_at);
   const tier1Html = renderPersonBlock(article, 1);
   const tier2Html = article.tier2_person ? renderPersonBlock(article, 2) : '';
 
@@ -596,7 +610,7 @@ function renderCard(article) {
   </h2>
 
   <div class="card-meta">
-    ${dateStr ? `<span>${escHtml(dateStr)}</span><span class="sep">·</span>` : ''}
+    ${dateStr ? `<span class="card-meta__date">🕐 ${escHtml(dateStr)}</span><span class="sep">·</span>` : ''}
     <span class="source-name">${escHtml(article.source_name || '—')}</span>
   </div>
 
