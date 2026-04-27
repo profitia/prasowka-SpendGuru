@@ -72,7 +72,7 @@ _GH_BRANCH        = os.environ.get("GITHUB_BRANCH", "main")
 _GH_API_BASE      = "https://api.github.com"
 
 
-def _gh_request(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+def _gh_request(method: str, path: str, body: dict | None = None, pat: str = "") -> tuple[int, dict]:
     """Wykonuje request do GitHub API. Zwraca (status_code, response_dict)."""
     url = f"{_GH_API_BASE}{path}"
     data = _json.dumps(body).encode() if body is not None else None
@@ -81,7 +81,7 @@ def _gh_request(method: str, path: str, body: dict | None = None) -> tuple[int, 
         data=data,
         method=method,
         headers={
-            "Authorization":        f"Bearer {_GH_PAT}",
+            "Authorization":        f"Bearer {pat or _GH_PAT}",
             "Accept":               "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
             "Content-Type":         "application/json",
@@ -400,7 +400,8 @@ async def trigger_pipeline() -> dict:
 
     Wymaga zmiennej środowiskowej GITHUB_PAT z tokenem PAT (scope: workflow).
     """
-    if not _GH_PAT:
+    pat = os.environ.get("GITHUB_PAT", "")
+    if not pat:
         raise HTTPException(
             status_code=503,
             detail="Brak konfiguracji GITHUB_PAT — ręczne uruchamianie pipeline'u jest niedostępne.",
@@ -410,7 +411,7 @@ async def trigger_pipeline() -> dict:
         f"/repos/{_GH_REPO_OWNER}/{_GH_REPO_NAME}"
         f"/actions/workflows/{_GH_WORKFLOW_FILE}/dispatches"
     )
-    status, resp_body = _gh_request("POST", path, body={"ref": _GH_BRANCH})
+    status, resp_body = _gh_request("POST", path, body={"ref": _GH_BRANCH}, pat=pat)
 
     if status == 204:
         log.info("pipeline/trigger: workflow_dispatch OK (%s)", _GH_WORKFLOW_FILE)
@@ -436,7 +437,8 @@ async def pipeline_status() -> dict:
 
     Wymaga GITHUB_PAT.
     """
-    if not _GH_PAT:
+    pat = os.environ.get("GITHUB_PAT", "")
+    if not pat:
         return {"available": False, "reason": "GITHUB_PAT nie skonfigurowany"}
 
     path = (
@@ -444,7 +446,7 @@ async def pipeline_status() -> dict:
         f"/actions/workflows/{_GH_WORKFLOW_FILE}/runs"
         f"?per_page=1&branch={_GH_BRANCH}"
     )
-    status, resp_body = _gh_request("GET", path)
+    status, resp_body = _gh_request("GET", path, pat=pat)
 
     if status != 200:
         log.warning("pipeline/status: GitHub zwrócił %d", status)
