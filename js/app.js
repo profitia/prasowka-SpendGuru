@@ -64,14 +64,16 @@ function formatDate(str) {
 function formatDateTime(dateStr, tsStr) {
   // dateStr  — article_date (DATE, np. "2026-04-27")
   // tsStr    — created_at  (TIMESTAMPTZ, np. "2026-04-27T06:12:34.123+00:00")
-  const datePart = formatDate(dateStr);
-  if (!tsStr) return datePart;
   try {
-    const t = new Date(tsStr);
-    const time = t.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-    return datePart ? `${datePart}, ${time}` : time;
+    const t = tsStr ? new Date(tsStr) : null;
+    const datePart = dateStr
+      ? formatDate(dateStr)
+      : t ? t.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+    const timePart = t ? t.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : '';
+    if (datePart && timePart) return `${datePart}, ${timePart}`;
+    return datePart || timePart;
   } catch {
-    return datePart;
+    return formatDate(dateStr);
   }
 }
 
