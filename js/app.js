@@ -629,6 +629,11 @@ function renderCard(article) {
        class="btn btn-primary">
       Otwórz artykuł ↗
     </a>
+    <button class="btn btn-danger btn-reject"
+            data-article-id="${escAttr(article.id)}"
+            data-article-url="${escAttr(article.source_url ?? '')}">
+      Odrzuć
+    </button>
   </div>
 </article>`;
 }
@@ -1184,6 +1189,150 @@ function exportCSV() {
 }
 
 // ============================================================
+// Add article by URL
+// ============================================================
+
+async function handleAddArticle() {
+  const input    = document.getElementById('addArticleUrl');
+  const statusEl = document.getElementById('addArticleStatus');
+  const btn      = document.getElementById('addArticleBtn');
+
+  const url = (input?.value ?? '').trim();
+
+  // Frontend validation
+  if (!url) {
+    statusEl.textContent = 'Podaj URL artykułu.';
+    statusEl.className   = 'add-article-status add-article-status--error';
+    return;
+  }
+  try {
+    const p = new URL(url);
+    if (!['http:', 'https:'].includes(p.protocol)) throw new Error();
+  } catch {
+    statusEl.textContent = 'Nieprawidłowy URL — musi zaczynać się od http:// lub https://';
+    statusEl.className   = 'add-article-status add-article-status--error';
+    return;
+  }
+
+  if (!apiAvailable || !API_BASE_URL) {
+    statusEl.textContent = 'Funkcja niedostępna — API nie jest podłączone.';
+    statusEl.className   = 'add-article-status add-article-status--error';
+    return;
+  }
+
+  btn.disabled           = true;
+  statusEl.textContent   = 'Pobieram artykuł…';
+  statusEl.className     = 'add-article-status add-article-status--info';
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/articles/add`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ url }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+      statusEl.textContent = `Błąd: ${err.detail || res.statusText}`;
+      statusEl.className   = 'add-article-status add-article-status--error';
+      return;
+    }
+
+    const data = await res.json();
+
+    if (data.status === 'duplicate') {
+      statusEl.textContent = 'Artykuł już istnieje w bazie.';
+      statusEl.className   = 'add-article-status add-article-status--warn';
+      const existingId   = data.article?.id ?? '';
+      const existingCard = existingId
+        ? document.querySelector(`.card[data-id="${escAttr(existingId)}"]`)
+        : null;
+      if (existingCard) {
+        existingCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        existingCard.classList.add('card--highlight');
+        setTimeout(() => existingCard.classList.remove('card--highlight'), 2000);
+      } else {
+        showToast('Artykuł już istnieje — może być na innej stronie wyników.', 'info', 4000);
+      }
+    } else {
+      // Nowy artykuł
+      statusEl.textContent = 'Artykuł dodany ✔';
+      statusEl.className   = 'add-article-status add-article-status--ok';
+      input.value          = '';
+
+      if (data.article) {
+        allArticles.unshift(data.article);
+        applyAndRender();
+        setTimeout(() => {
+          const newCard = document.querySelector(`.card[data-id="${escAttr(data.article.id)}"]`);
+          if (newCard) {
+            newCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            newCard.classList.add('card--highlight');
+            setTimeout(() => newCard.classList.remove('card--highlight'), 2000);
+          }
+        }, 80);
+      }
+      showToast('Artykuł dodany ✔', 'success', 4000);
+    }
+  } catch (err) {
+    statusEl.textContent = `Błąd połączenia: ${err.message}`;
+    statusEl.className   = 'add-article-status add-article-status--error';
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => {
+      statusEl.textContent = '';
+      statusEl.className   = 'add-article-status';
+    }, 6000);
+  }
+}
+
+// ============================================================
+// Reject article
+// ============================================================
+
+async function handleRejectArticle(e) {
+  const btn = e.target.closest('.btn-reject');
+  if (!btn) return;
+
+  const articleId  = btn.dataset.articleId;
+  const articleUrl = btn.dataset.articleUrl;
+
+  if (!confirm('Odrzucić ten artykuł?\n\nZostanie trwale oznaczony jako odrzucony w bazie danych i nie będzie ponownie wyświetlany.')) {
+    return;
+  }
+
+  if (!apiAvailable || !API_BASE_URL) {
+    showToast('Funkcja niedostępna — API nie jest podłączone.', 'error', 4000);
+    return;
+  }
+
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/articles/reject`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ article_url: articleUrl }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+      showToast(`Błąd odrzucania: ${err.detail || res.statusText}`, 'error', 5000);
+      btn.disabled = false;
+      return;
+    }
+
+    // Usuń z tablicy i przerenderuj
+    allArticles = allArticles.filter(a => a.id !== articleId);
+    applyAndRender();
+    showToast('Artykuł odrzucony i usunięty z widoku.', 'success', 4000);
+  } catch (err) {
+    showToast(`Błąd połączenia: ${err.message}`, 'error', 5000);
+    btn.disabled = false;
+  }
+}
+
+// ============================================================
 // Bootstrap
 // ============================================================
 
@@ -1227,8 +1376,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event delegation on cards grid
   const cardsEl = document.getElementById('cards');
-  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleRunApollo(e); handleHistoryFlagClick(e); });
+  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleRunApollo(e); handleHistoryFlagClick(e); handleRejectArticle(e); });
   cardsEl.addEventListener('change', handleApolloCheckbox);
+
+  // Add article by URL
+  document.getElementById('addArticleBtn')
+    .addEventListener('click', handleAddArticle);
+  document.getElementById('addArticleUrl')
+    .addEventListener('keydown', e => { if (e.key === 'Enter') handleAddArticle(); });
 
   // Event delegation on pagination
   document.getElementById('pagination').addEventListener('click', handlePaginationClick);

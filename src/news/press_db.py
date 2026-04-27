@@ -409,6 +409,80 @@ def load_press_articles() -> list[dict]:
     return result
 
 
+_LOAD_BY_URL_SQL = """
+SELECT
+    id, article_id, article_url, article_title,
+    article_date, source_name, company_name, industry,
+    press_type, tier1_person, tier1_position, tier1_email,
+    tier2_person, tier2_position, tier2_email,
+    reason, context, apollo_status, created_at, updated_at,
+    COALESCE(data_quality_status, 'unknown') AS data_quality_status,
+    data_quality_notes
+FROM apollo.press_articles
+WHERE article_url = %(url)s
+LIMIT 1
+"""
+
+_REJECT_SQL = """
+UPDATE apollo.press_articles
+SET data_quality_status = 'rejected', updated_at = now()
+WHERE article_url = %(url)s
+"""
+
+
+def get_press_article_by_url(url: str) -> Optional[dict]:
+    """Zwraca pojedynczy artykuł z bazy (niezależnie od statusu) lub None."""
+    import psycopg.rows  # type: ignore
+
+    with get_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(_LOAD_BY_URL_SQL, {"url": url})
+            r = cur.fetchone()
+
+    if r is None:
+        return None
+    return {
+        "id":                   r["article_id"],
+        "source_url":           r["article_url"],
+        "title":                r["article_title"] or "",
+        "article_date":         r["article_date"].isoformat() if r["article_date"] else "",
+        "source_name":          r["source_name"] or "",
+        "company":              r["company_name"] or "",
+        "industry":             r["industry"] or "",
+        "press_type":           r["press_type"] or "",
+        "tier1_person":         r["tier1_person"] or "",
+        "tier1_position":       r["tier1_position"] or "",
+        "tier1_email":          r["tier1_email"] or "",
+        "tier2_person":         r["tier2_person"] or "",
+        "tier2_position":       r["tier2_position"] or "",
+        "tier2_email":          r["tier2_email"] or "",
+        "reason":               r["reason"] or "",
+        "context":              r["context"] or "",
+        "apollo_status":        r["apollo_status"],
+        "data_quality_status":  r["data_quality_status"] or "unknown",
+        "data_quality_notes":   r["data_quality_notes"] or "",
+        "created_at":           r["created_at"].isoformat() if r["created_at"] else "",
+        "updated_at":           r["updated_at"].isoformat() if r["updated_at"] else "",
+    }
+
+
+def reject_press_article(url: str) -> bool:
+    """
+    Oznacza artykuł jako 'rejected' — trwale ukrywa go z UI i eksportów.
+
+    Nie usuwa fizycznie wiersza z DB, co ma dwie zalety:
+    - Zachowuje historię kampanii (press_campaign_history może mieć referencję).
+    - Zapobiega powrotowi artykułu po kolejnym uruchomieniu pipeline'u:
+      UPSERT ON CONFLICT zachowuje data_quality_status='rejected'.
+
+    Zwraca True jeśli rekord istniał i został zaktualizowany.
+    """
+    with get_connection() as conn:
+        cur = conn.execute(_REJECT_SQL, {"url": url})
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+
+
 # ---------------------------------------------------------------------------
 # Contact field updates (API endpoints)
 # ---------------------------------------------------------------------------

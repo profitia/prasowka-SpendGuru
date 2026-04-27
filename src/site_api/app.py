@@ -19,10 +19,13 @@ Deployment (Render/Railway):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sys
+from datetime import date as _date
 from pathlib import Path
+from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
 # Path setup — musi być przed importem lokalnych modułów
@@ -42,6 +45,10 @@ from news.press_db import (
     insert_campaign_history,
     load_campaign_history_by_email,
     ensure_campaign_history_table,
+    article_exists,
+    upsert_press_article,
+    get_press_article_by_url,
+    reject_press_article,
 )
 
 # ---------------------------------------------------------------------------
@@ -163,6 +170,35 @@ class RunAutoRequest(BaseModel):
         return v
 
 
+class AddArticleRequest(BaseModel):
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("URL nie może być pusty")
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("URL musi zaczynać się od http:// lub https://")
+        if not parsed.netloc:
+            raise ValueError("Nieprawidłowy URL — brak domeny")
+        return v
+
+
+class RejectArticleRequest(BaseModel):
+    article_url: str
+
+    @field_validator("article_url")
+    @classmethod
+    def validate_article_url(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("article_url nie może być pusty")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -207,6 +243,109 @@ async def get_articles(
     filtered = [a for a in articles if (a.get("data_quality_status") or "unknown") in requested]
     log.debug("GET /api/articles: total=%d, quality=%s, returned=%d", len(articles), requested, len(filtered))
     return filtered
+
+
+@app.post("/api/articles/add")
+async def add_article(body: AddArticleRequest) -> dict:
+    """
+    Ręcznie dodaje artykuł po URL. Używa tego samego flow co artykuły automatyczne
+    (upsert do apollo.press_articles, widoczny w UI jak każdy inny artykuł).
+
+    - Duplikat: zwraca {"status": "duplicate", "article": <istniejący rekord>}
+    - Nowy:     scrape tytułu, upsert, zwraca {"status": "created", "article": <nowy rekord>}
+    """
+    url = body.url
+    log.info("POST /api/articles/add: %s", url[:120])
+
+    try:
+        # Sprawdź duplikat
+        if article_exists(url):
+            existing = get_press_article_by_url(url)
+            log.info("add_article: duplikat %s", url[:80])
+            return {"status": "duplicate", "article": existing}
+
+        # Scrape tytułu i tekstu (błąd scraping nie blokuje dodania)
+        try:
+            from news.scraper import fetch_article
+            scraped = fetch_article(url)
+        except Exception as exc:
+            log.warning("add_article: scraping nie powiodło się dla %s: %s", url[:80], exc)
+            scraped = {"url": url, "title": "", "text": "", "source_name": ""}
+
+        # source_name z domeny URL (fallback jeśli scraper nie zwrócił)
+        parsed_url = urlparse(url)
+        domain = parsed_url.hostname or ""
+        if domain.startswith("www."):
+            domain = domain[4:]
+        source_name = scraped.get("source_name") or domain
+
+        # Generuj article_id z hasha URL
+        article_id = "manual_" + hashlib.sha256(url.encode()).hexdigest()[:12]
+
+        # Buduj słownik site_article (ten sam format co output orchestratora)
+        article = {
+            "id":             article_id,
+            "source_url":     url,
+            "title":          scraped.get("title") or "",
+            "article_date":   _date.today().isoformat(),
+            "source_name":    source_name,
+            "company":        "",
+            "industry":       "",
+            "press_type":     "",
+            "tier1_person":   "",
+            "tier1_position": "",
+            "tier2_person":   "",
+            "tier2_position": "",
+            "reason":         "Dodano ręcznie",
+            "context":        "",
+            "data_quality_status": "ok",
+        }
+
+        upsert_press_article(article)
+
+        # Wczytaj z DB żeby zwrócić pełny rekord (z polami DB jak created_at)
+        saved = get_press_article_by_url(url)
+        log.info("add_article: zapisano %s (id=%s)", url[:80], article_id)
+        return {"status": "created", "article": saved or article}
+
+    except (EnvironmentError, ConnectionError) as exc:
+        log.error("Błąd DB w POST /api/articles/add: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("Nieoczekiwany błąd w POST /api/articles/add")
+        raise HTTPException(status_code=500, detail="Błąd serwera")
+
+
+@app.post("/api/articles/reject")
+async def reject_article(body: RejectArticleRequest) -> dict:
+    """
+    Trwale odrzuca artykuł: ustawia data_quality_status='rejected'.
+
+    Artykuł znika z UI i nie wraca po rebuildzie danych z bazy.
+    Nie usuwa fizycznie wiersza — zachowuje historię kampanii i chroni przed
+    ponownym dodaniem przez pipeline (UPSERT ON CONFLICT zachowuje 'rejected').
+    """
+    log.info("POST /api/articles/reject: %s", body.article_url[:120])
+
+    try:
+        found = reject_press_article(body.article_url)
+    except (EnvironmentError, ConnectionError) as exc:
+        log.error("Błąd DB w POST /api/articles/reject: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        log.exception("Nieoczekiwany błąd w POST /api/articles/reject")
+        raise HTTPException(status_code=500, detail="Błąd serwera")
+
+    if not found:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Artykuł nie znaleziony: {body.article_url}",
+        )
+
+    log.info("reject_article: odrzucono %s", body.article_url[:80])
+    return {"ok": True}
 
 
 @app.post("/api/articles/contact")
