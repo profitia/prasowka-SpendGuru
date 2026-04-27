@@ -1189,6 +1189,90 @@ function exportCSV() {
 }
 
 // ============================================================
+// Pipeline manual trigger
+// ============================================================
+
+let _pipelineStatusInterval = null;
+
+async function handleRunPipeline() {
+  if (!apiAvailable || !API_BASE_URL) {
+    showToast('Funkcja niedostępna — API nie jest podłączone.', 'error', 4000);
+    return;
+  }
+
+  const btn  = document.getElementById('runPipelineBtn');
+  const icon = document.getElementById('runPipelineIcon');
+  if (!btn) return;
+
+  btn.disabled    = true;
+  icon.innerHTML  = '<animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="1s" repeatCount="indefinite"/><circle cx="10" cy="10" r="7" stroke-dasharray="22 22" stroke-linecap="round"/>';
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/pipeline/trigger`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && data.ok) {
+      showToast('Pipeline uruchomiony ✔ Artykuły pojawią się za kilka minut.', 'success', 8000);
+      // Sprawdzaj status co 15 s przez max 5 minut
+      _startPipelineStatusPolling();
+    } else {
+      const msg = data.detail || 'Nie udało się uruchomić pipeline\'u.';
+      showToast(`Błąd: ${msg}`, 'error', 6000);
+    }
+  } catch (err) {
+    showToast(`Błąd połączenia: ${err.message}`, 'error', 5000);
+  } finally {
+    // Przywróć ikonę play
+    icon.innerHTML = '<path d="M4 4l12 6-12 6V4z"/>';
+    btn.disabled = false;
+  }
+}
+
+function _startPipelineStatusPolling() {
+  if (_pipelineStatusInterval) clearInterval(_pipelineStatusInterval);
+  let attempts = 0;
+  const MAX = 20; // 20 × 15 s = 5 minut
+
+  _pipelineStatusInterval = setInterval(async () => {
+    attempts++;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/pipeline/status`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const run  = data.last_run;
+
+      if (!run) return;
+
+      if (run.status === 'completed') {
+        clearInterval(_pipelineStatusInterval);
+        _pipelineStatusInterval = null;
+
+        if (run.conclusion === 'success') {
+          showToast('Pipeline zakończony ✔ Odświeżam listę artykułów…', 'success', 5000);
+          // Poczekaj chwilę na zapis do DB, potem przeładuj artykuły
+          setTimeout(async () => {
+            await loadArticles();
+          }, 3000);
+        } else {
+          const msg = run.conclusion ? `Pipeline zakończony: ${run.conclusion}` : 'Pipeline zakończony';
+          const url = run.html_url ? ` <a href="${run.html_url}" target="_blank">Logi GitHub ↗</a>` : '';
+          showToast(msg + url, 'error', 8000);
+        }
+      }
+    } catch { /* ignoruj błędy sieciowe podczas pollingu */ }
+
+    if (attempts >= MAX) {
+      clearInterval(_pipelineStatusInterval);
+      _pipelineStatusInterval = null;
+    }
+  }, 15_000);
+}
+
+// ============================================================
 // Add article by URL
 // ============================================================
 
@@ -1373,6 +1457,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Export
   document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+
+  // Pipeline manual trigger
+  document.getElementById('runPipelineBtn').addEventListener('click', handleRunPipeline);
 
   // Event delegation on cards grid
   const cardsEl = document.getElementById('cards');

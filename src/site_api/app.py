@@ -27,6 +27,10 @@ from datetime import date as _date
 from pathlib import Path
 from urllib.parse import urlparse
 
+import urllib.request
+import urllib.error
+import json as _json
+
 # ---------------------------------------------------------------------------
 # Path setup — musi być przed importem lokalnych modułów
 # ---------------------------------------------------------------------------
@@ -55,6 +59,46 @@ from news.press_db import (
 # Apollo runner config
 # ---------------------------------------------------------------------------
 APOLLO_TIMEOUT = int(os.environ.get("APOLLO_TIMEOUT", "180"))
+
+# ---------------------------------------------------------------------------
+# GitHub Actions pipeline trigger config
+# ---------------------------------------------------------------------------
+_GH_PAT           = os.environ.get("GITHUB_PAT", "")
+_GH_REPO_OWNER    = os.environ.get("GITHUB_REPO_OWNER", "profitia")
+_GH_REPO_NAME     = os.environ.get("GITHUB_REPO_NAME", "prasowka-SpendGuru")
+_GH_WORKFLOW_FILE = os.environ.get("GITHUB_WORKFLOW_FILE", "daily_prasowka.yml")
+_GH_BRANCH        = os.environ.get("GITHUB_BRANCH", "main")
+
+_GH_API_BASE      = "https://api.github.com"
+
+
+def _gh_request(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    """Wykonuje request do GitHub API. Zwraca (status_code, response_dict)."""
+    url = f"{_GH_API_BASE}{path}"
+    data = _json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization":        f"Bearer {_GH_PAT}",
+            "Accept":               "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type":         "application/json",
+            "User-Agent":           "PrasowkaSpendGuru/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read()
+            return resp.status, (_json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            body_err = _json.loads(raw)
+        except Exception:
+            body_err = {"message": raw.decode(errors="replace")}
+        return exc.code, body_err
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -346,6 +390,81 @@ async def reject_article(body: RejectArticleRequest) -> dict:
 
     log.info("reject_article: odrzucono %s", body.article_url[:80])
     return {"ok": True}
+
+
+@app.post("/api/pipeline/trigger")
+async def trigger_pipeline() -> dict:
+    """
+    Wyzwala ręczne uruchomienie pipeline'u prasówki przez GitHub Actions
+    (workflow_dispatch na daily_prasowka.yml).
+
+    Wymaga zmiennej środowiskowej GITHUB_PAT z tokenem PAT (scope: workflow).
+    """
+    if not _GH_PAT:
+        raise HTTPException(
+            status_code=503,
+            detail="Brak konfiguracji GITHUB_PAT — ręczne uruchamianie pipeline'u jest niedostępne.",
+        )
+
+    path = (
+        f"/repos/{_GH_REPO_OWNER}/{_GH_REPO_NAME}"
+        f"/actions/workflows/{_GH_WORKFLOW_FILE}/dispatches"
+    )
+    status, resp_body = _gh_request("POST", path, body={"ref": _GH_BRANCH})
+
+    if status == 204:
+        log.info("pipeline/trigger: workflow_dispatch OK (%s)", _GH_WORKFLOW_FILE)
+        runs_url = (
+            f"https://github.com/{_GH_REPO_OWNER}/{_GH_REPO_NAME}/actions"
+            f"/workflows/{_GH_WORKFLOW_FILE}"
+        )
+        return {
+            "ok":       True,
+            "message":  "Pipeline uruchomiony. Artykuły pojawią się w ciągu kilku minut.",
+            "runs_url": runs_url,
+        }
+
+    log.error("pipeline/trigger: GitHub zwrócił %d: %s", status, resp_body)
+    detail = resp_body.get("message") or f"GitHub HTTP {status}"
+    raise HTTPException(status_code=502, detail=f"GitHub API: {detail}")
+
+
+@app.get("/api/pipeline/status")
+async def pipeline_status() -> dict:
+    """
+    Zwraca status ostatniego uruchomienia pipeline'u (GitHub Actions).
+
+    Wymaga GITHUB_PAT.
+    """
+    if not _GH_PAT:
+        return {"available": False, "reason": "GITHUB_PAT nie skonfigurowany"}
+
+    path = (
+        f"/repos/{_GH_REPO_OWNER}/{_GH_REPO_NAME}"
+        f"/actions/workflows/{_GH_WORKFLOW_FILE}/runs"
+        f"?per_page=1&branch={_GH_BRANCH}"
+    )
+    status, resp_body = _gh_request("GET", path)
+
+    if status != 200:
+        log.warning("pipeline/status: GitHub zwrócił %d", status)
+        return {"available": False, "reason": f"GitHub HTTP {status}"}
+
+    runs = resp_body.get("workflow_runs", [])
+    if not runs:
+        return {"available": True, "last_run": None}
+
+    run = runs[0]
+    return {
+        "available":  True,
+        "last_run": {
+            "id":         run.get("id"),
+            "status":     run.get("status"),       # queued | in_progress | completed
+            "conclusion": run.get("conclusion"),   # success | failure | cancelled | None
+            "started_at": run.get("run_started_at") or run.get("created_at"),
+            "html_url":   run.get("html_url"),
+        },
+    }
 
 
 @app.post("/api/articles/contact")
