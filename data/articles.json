@@ -320,5 +320,25 @@
     "status": "new",
     "created_at": "2026-04-28T06:29:57.029412+00:00",
     "updated_at": "2026-04-28T06:29:57.029412+00:00"
+  },
+  {
+    "id": "portalspoywczy-aeca806b44",
+    "industry": "spożywcza",
+    "press_type": "food_press",
+    "article_date": "",
+    "title": "Rekordowa liczba imigrantów w Polsce, choć liczba zezwoleń na pracę spada",
+    "source_name": "Portal Spożywczy",
+    "source_url": "https://www.portalspozywczy.pl/technologie/wiadomosci/rekordowa-liczba-imigrantow-w-polsce-choc-liczba-zezwolen-na-prace-spada,288072.html",
+    "company": "prezes Stowarzyszenia",
+    "tier1_person": "Maciej Kopaczyński",
+    "tier1_position": "prezes",
+    "tier2_person": "",
+    "tier2_position": "",
+    "reason": "Osoba zarządcza: Maciej Kopaczyński (prezes); branża FMCG (4 słów kluczowych)",
+    "context": "Artykuł dotyczy prezes Stowarzyszenia (prezes: Maciej Kopaczyński). Temat: Rekordowa liczba imigrantów w Polsce, choć liczba zezwoleń na pracę spada. Potencjalny hook do kampanii outbound: aktualne działania lub zmiany w firmie.",
+    "contact_email": "",
+    "status": "new",
+    "created_at": "2026-04-28T07:27:32.991437+00:00",
+    "updated_at": "2026-04-28T07:27:32.991437+00:00"
   }
 ]
