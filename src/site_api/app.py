@@ -53,6 +53,8 @@ from news.press_db import (
     upsert_press_article,
     get_press_article_by_url,
     reject_press_article,
+    update_article_fields,
+    accept_press_article,
 )
 
 # ---------------------------------------------------------------------------
@@ -243,6 +245,35 @@ class RejectArticleRequest(BaseModel):
         return v
 
 
+class UpdateFieldsRequest(BaseModel):
+    article_url:    str
+    company:        str = ""
+    tier1_person:   str = ""
+    tier1_position: str = ""
+    tier2_person:   str = ""
+    tier2_position: str = ""
+
+    @field_validator("article_url")
+    @classmethod
+    def validate_fields_url(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("article_url nie może być pusty")
+        return v
+
+
+class AcceptArticleRequest(BaseModel):
+    article_url: str
+
+    @field_validator("article_url")
+    @classmethod
+    def validate_accept_url(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("article_url nie może być pusty")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -389,6 +420,72 @@ async def reject_article(body: RejectArticleRequest) -> dict:
         )
 
     log.info("reject_article: odrzucono %s", body.article_url[:80])
+    return {"ok": True}
+
+
+@app.post("/api/articles/fields")
+async def update_fields(body: UpdateFieldsRequest) -> dict:
+    """
+    Aktualizuje pola edytowalne artykułu: firma, osoby, stanowiska.
+
+    Body: { article_url, company, tier1_person, tier1_position, tier2_person, tier2_position }
+    Zwraca zaktualizowany rekord z nowymi wartościami pól.
+    """
+    log.info("POST /api/articles/fields: %s", body.article_url[:120])
+    try:
+        result = update_article_fields(
+            body.article_url,
+            body.company,
+            body.tier1_person,
+            body.tier1_position,
+            body.tier2_person,
+            body.tier2_position,
+        )
+    except (EnvironmentError, ConnectionError) as exc:
+        log.error("Błąd DB w POST /api/articles/fields: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        log.exception("Nieoczekiwany błąd w POST /api/articles/fields")
+        raise HTTPException(status_code=500, detail="Błąd serwera")
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Artykuł nie znaleziony: {body.article_url}",
+        )
+
+    log.info(
+        "update_fields: zaktualizowano pola dla %s (company=%r, t1=%r, t2=%r)",
+        body.article_url[:60], body.company[:30] if body.company else "", body.tier1_person[:30] if body.tier1_person else "", body.tier2_person[:30] if body.tier2_person else "",
+    )
+    return result
+
+
+@app.post("/api/articles/accept")
+async def accept_article(body: AcceptArticleRequest) -> dict:
+    """
+    Ustawia data_quality_status='ok' dla artykułu (ręczna akceptacja przez użytkownika).
+
+    Body: { article_url }
+    Zwraca {"ok": True}.
+    """
+    log.info("POST /api/articles/accept: %s", body.article_url[:120])
+    try:
+        found = accept_press_article(body.article_url)
+    except (EnvironmentError, ConnectionError) as exc:
+        log.error("Błąd DB w POST /api/articles/accept: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        log.exception("Nieoczekiwany błąd w POST /api/articles/accept")
+        raise HTTPException(status_code=500, detail="Błąd serwera")
+
+    if not found:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Artykuł nie znaleziony: {body.article_url}",
+        )
+
+    log.info("accept_article: zaakceptowano %s", body.article_url[:80])
     return {"ok": True}
 
 

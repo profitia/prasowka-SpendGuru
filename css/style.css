@@ -1040,6 +1040,130 @@ a:hover { text-decoration: underline; }
 }
 
 /* ============================================================
+   INLINE FIELD EDITING
+   ============================================================ */
+
+.card-field--editable {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.card-field--editable .field-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-edit-field {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+  font-family: var(--font);
+}
+
+.btn-edit-field:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.field-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  width: 100%;
+}
+
+.field-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  font-family: var(--font);
+  font-size: 0.85rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent-bg);
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.btn-ok-field,
+.btn-cancel-field {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  padding: 4px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 600;
+  font-family: var(--font);
+  transition: background .15s, color .15s;
+}
+
+.btn-ok-field {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.btn-ok-field:hover {
+  background: var(--color-accent-hover);
+}
+
+.btn-cancel-field {
+  background: var(--color-surface-2);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
+.btn-cancel-field:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+/* ============================================================
+   ACCEPT BUTTON
+   ============================================================ */
+
+.btn-accept {
+  background: var(--color-green-bg);
+  color: var(--color-green);
+  border: 1px solid transparent;
+}
+
+.btn-accept:hover {
+  background: var(--color-green);
+  color: #fff;
+  text-decoration: none;
+}
+
+.btn-accept--done {
+  background: var(--color-surface-2);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  cursor: default;
+  opacity: .85;
+}
+
+.btn-accept--done:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+/* ============================================================
    PAGINATION
    ============================================================ */
 .pagination {

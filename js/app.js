@@ -536,13 +536,51 @@ function renderPersonBlock(article, tier) {
         <span class="tier-label">Osoba Tier ${tier}</span>
         <span class="apollo-badge ${badgeClass}" id="status_badge_${escAttr(article.id)}_t${tier}">${escHtml(statusLabel(apolloStatus))}</span>
       </div>
-      <div class="card-field">
+      <div class="card-field card-field--editable">
         <span class="field-label">Imię i nazwisko</span>
-        <span class="field-value">${escHtml(person)}</span>
+        <span class="field-value" id="person_val_${escAttr(article.id)}_t${tier}">${escHtml(person)}</span>
+        <button class="btn-edit-field"
+                data-article-id="${escAttr(article.id)}"
+                data-tier="${tier}"
+                data-field="person">Edytuj</button>
       </div>
-      <div class="card-field">
+      <div class="field-edit-row" id="person_edit_${escAttr(article.id)}_t${tier}" hidden>
+        <input type="text"
+               class="field-input"
+               id="person_input_${escAttr(article.id)}_t${tier}"
+               value="${escAttr(person)}"
+               placeholder="Imię i nazwisko">
+        <button class="btn-ok-field"
+                data-article-id="${escAttr(article.id)}"
+                data-tier="${tier}"
+                data-field="person">OK</button>
+        <button class="btn-cancel-field"
+                data-article-id="${escAttr(article.id)}"
+                data-tier="${tier}"
+                data-field="person">Anuluj</button>
+      </div>
+      <div class="card-field card-field--editable">
         <span class="field-label">Stanowisko</span>
-        <span class="field-value">${escHtml(position || '—')}</span>
+        <span class="field-value" id="pos_val_${escAttr(article.id)}_t${tier}">${escHtml(position || '—')}</span>
+        <button class="btn-edit-field"
+                data-article-id="${escAttr(article.id)}"
+                data-tier="${tier}"
+                data-field="position">Edytuj</button>
+      </div>
+      <div class="field-edit-row" id="pos_edit_${escAttr(article.id)}_t${tier}" hidden>
+        <input type="text"
+               class="field-input"
+               id="pos_input_${escAttr(article.id)}_t${tier}"
+               value="${escAttr(position || '')}"
+               placeholder="Stanowisko">
+        <button class="btn-ok-field"
+                data-article-id="${escAttr(article.id)}"
+                data-tier="${tier}"
+                data-field="position">OK</button>
+        <button class="btn-cancel-field"
+                data-article-id="${escAttr(article.id)}"
+                data-tier="${tier}"
+                data-field="position">Anuluj</button>
       </div>
       <div class="email-field">
         <label class="field-label" for="${inputId}">Email</label>
@@ -618,9 +656,25 @@ function renderCard(article) {
 
   <hr class="card-divider">
 
-  <div class="card-field">
+  <div class="card-field card-field--editable">
     <span class="field-label">Firma</span>
-    <span class="field-value">${escHtml(article.company || '—')}</span>
+    <span class="field-value" id="company_val_${escAttr(article.id)}">${escHtml(article.company || '—')}</span>
+    <button class="btn-edit-field"
+            data-article-id="${escAttr(article.id)}"
+            data-field="company">Edytuj</button>
+  </div>
+  <div class="field-edit-row" id="company_edit_${escAttr(article.id)}" hidden>
+    <input type="text"
+           class="field-input"
+           id="company_input_${escAttr(article.id)}"
+           value="${escAttr(article.company || '')}"
+           placeholder="Nazwa firmy">
+    <button class="btn-ok-field"
+            data-article-id="${escAttr(article.id)}"
+            data-field="company">OK</button>
+    <button class="btn-cancel-field"
+            data-article-id="${escAttr(article.id)}"
+            data-field="company">Anuluj</button>
   </div>
 
   ${tier1Html}
@@ -645,6 +699,16 @@ function renderCard(article) {
        class="btn btn-primary">
       Otwórz artykuł ↗
     </a>
+    ${dqs !== 'ok'
+      ? `<button class="btn btn-accept btn-accept-article"
+                data-article-id="${escAttr(article.id)}"
+                data-article-url="${escAttr(article.source_url ?? '')}">
+          Zaakceptuj
+        </button>`
+      : `<button class="btn btn-accept btn-accept--done" disabled>
+          Zaakceptowany ✔
+        </button>`
+    }
     <button class="btn btn-danger btn-reject"
             data-article-id="${escAttr(article.id)}"
             data-article-url="${escAttr(article.source_url ?? '')}">
@@ -1433,6 +1497,172 @@ async function handleRejectArticle(e) {
 }
 
 // ============================================================
+// Inline field editing (Firma, Imię i nazwisko, Stanowisko)
+// ============================================================
+
+/**
+ * Returns the element-id prefix and suffix for a given field + articleId + tier.
+ * field: "company" | "person" | "position"
+ * tier:  "1" | "2" | undefined
+ */
+function _fieldIds(field, articleId, tier) {
+  const prefix = field === 'company' ? 'company' : field === 'person' ? 'person' : 'pos';
+  const suffix = tier ? `_${articleId}_t${tier}` : `_${articleId}`;
+  return {
+    valId:   `${prefix}_val${suffix}`,
+    editId:  `${prefix}_edit${suffix}`,
+    inputId: `${prefix}_input${suffix}`,
+  };
+}
+
+function handleEditField(e) {
+  const btn = e.target.closest('.btn-edit-field');
+  if (!btn) return;
+
+  const { field, articleId, tier } = btn.dataset;
+  const { valId, editId, inputId } = _fieldIds(field, articleId, tier);
+
+  const valEl   = document.getElementById(valId);
+  const editEl  = document.getElementById(editId);
+  const inputEl = document.getElementById(inputId);
+  if (!valEl || !editEl || !inputEl) return;
+
+  valEl.hidden  = true;
+  btn.hidden    = true;
+  editEl.hidden = false;
+  inputEl.focus();
+  inputEl.select();
+}
+
+function handleCancelField(e) {
+  const btn = e.target.closest('.btn-cancel-field');
+  if (!btn) return;
+
+  const { field, articleId, tier } = btn.dataset;
+  const { valId, editId, inputId } = _fieldIds(field, articleId, tier);
+
+  const valEl   = document.getElementById(valId);
+  const editEl  = document.getElementById(editId);
+  const inputEl = document.getElementById(inputId);
+
+  // Restore original value from allArticles
+  const article = allArticles.find(a => a.id === articleId);
+  if (article && inputEl) {
+    if (field === 'company')  inputEl.value = article.company || '';
+    if (field === 'person')   inputEl.value = tier === '1' ? (article.tier1_person || '') : (article.tier2_person || '');
+    if (field === 'position') inputEl.value = tier === '1' ? (article.tier1_position || '') : (article.tier2_position || '');
+  }
+
+  // Restore display — find the edit button back
+  const editBtnSel = tier
+    ? `.btn-edit-field[data-article-id="${CSS.escape(articleId)}"][data-field="${field}"][data-tier="${tier}"]`
+    : `.btn-edit-field[data-article-id="${CSS.escape(articleId)}"][data-field="${field}"]:not([data-tier])`;
+  document.querySelectorAll(editBtnSel).forEach(b => { b.hidden = false; });
+  if (valEl)  valEl.hidden  = false;
+  if (editEl) editEl.hidden = true;
+}
+
+async function handleOkField(e) {
+  const btn = e.target.closest('.btn-ok-field');
+  if (!btn) return;
+
+  const { field, articleId, tier } = btn.dataset;
+  const { valId, editId, inputId } = _fieldIds(field, articleId, tier);
+
+  const inputEl = document.getElementById(inputId);
+  const valEl   = document.getElementById(valId);
+  const editEl  = document.getElementById(editId);
+  if (!inputEl) return;
+
+  const newValue = inputEl.value.trim();
+  const article  = allArticles.find(a => a.id === articleId);
+  if (!article) return;
+
+  // Update local article object
+  if (field === 'company')  article.company = newValue;
+  if (field === 'person')   { if (tier === '1') article.tier1_person = newValue; else article.tier2_person = newValue; }
+  if (field === 'position') { if (tier === '1') article.tier1_position = newValue; else article.tier2_position = newValue; }
+
+  // Update displayed value
+  if (valEl) valEl.textContent = newValue || '—';
+
+  // Restore edit button + hide edit row
+  const editBtnSel = tier
+    ? `.btn-edit-field[data-article-id="${CSS.escape(articleId)}"][data-field="${field}"][data-tier="${tier}"]`
+    : `.btn-edit-field[data-article-id="${CSS.escape(articleId)}"][data-field="${field}"]:not([data-tier])`;
+  document.querySelectorAll(editBtnSel).forEach(b => { b.hidden = false; });
+  if (valEl)  valEl.hidden  = false;
+  if (editEl) editEl.hidden = true;
+
+  // If person name/position changed → rebuild command block (uses article fields for Apollo cmd)
+  if ((field === 'person' || field === 'position') && tier) {
+    const tierNum = parseInt(tier, 10);
+    const contact = getContact(articleId, tierNum);
+    const email   = contact?.email ?? '';
+    const status  = contact?.apollo_status ?? 'waiting';
+    const cmdEl   = document.getElementById(`cmd_${articleId}_t${tier}`);
+    if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tierNum, email, article, status);
+    // Sync updated name to localStorage contact
+    if (contact) saveContact(articleId, tierNum, article, email, status);
+  }
+
+  // Persist to API
+  if (apiAvailable && API_BASE_URL && article.source_url) {
+    const res = await postToApi('/api/articles/fields', {
+      article_url:    article.source_url,
+      company:        article.company        ?? '',
+      tier1_person:   article.tier1_person   ?? '',
+      tier1_position: article.tier1_position ?? '',
+      tier2_person:   article.tier2_person   ?? '',
+      tier2_position: article.tier2_position ?? '',
+    });
+    if (!res.ok) {
+      showToast('Nie udało się zapisać w bazie — dane zaktualizowane lokalnie.', 'error', 4000);
+    }
+  }
+}
+
+// ============================================================
+// Accept article
+// ============================================================
+
+async function handleAcceptArticle(e) {
+  const btn = e.target.closest('.btn-accept-article');
+  if (!btn || btn.disabled) return;
+
+  const articleId  = btn.dataset.articleId;
+  const articleUrl = btn.dataset.articleUrl;
+  const article    = allArticles.find(a => a.id === articleId);
+  if (!article) return;
+
+  // Update local state immediately
+  article.data_quality_status = 'ok';
+
+  // Update button → accepted state
+  btn.textContent = 'Zaakceptowany ✔';
+  btn.classList.add('btn-accept--done');
+  btn.disabled = true;
+  delete btn.dataset.articleUrl;  // prevent re-clicks
+
+  // Hide "needs_review" quality badge if present
+  const card = document.querySelector(`.card[data-id="${CSS.escape(articleId)}"]`);
+  if (card) {
+    const badge = card.querySelector('.badge-quality--warn');
+    if (badge) badge.remove();
+  }
+
+  // Persist to API
+  if (apiAvailable && API_BASE_URL && articleUrl) {
+    const res = await postToApi('/api/articles/accept', { article_url: articleUrl });
+    if (res.ok) {
+      showToast('Artykuł zaakceptowany ✔', 'success', 3000);
+    } else {
+      showToast('Nie udało się zapisać w bazie — zaakceptowano lokalnie.', 'error', 4000);
+    }
+  }
+}
+
+// ============================================================
 // Bootstrap
 // ============================================================
 
@@ -1479,7 +1709,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event delegation on cards grid
   const cardsEl = document.getElementById('cards');
-  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleRunApollo(e); handleHistoryFlagClick(e); handleRejectArticle(e); });
+  cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleRunApollo(e); handleHistoryFlagClick(e); handleRejectArticle(e); handleEditField(e); handleCancelField(e); handleOkField(e); handleAcceptArticle(e); });
   cardsEl.addEventListener('change', handleApolloCheckbox);
 
   // Add article by URL

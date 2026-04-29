@@ -483,6 +483,79 @@ def reject_press_article(url: str) -> bool:
         return (cur.rowcount or 0) > 0
 
 
+_UPDATE_FIELDS_SQL = """
+UPDATE apollo.press_articles
+SET company_name    = %(company_name)s,
+    tier1_person    = %(tier1_person)s,
+    tier1_position  = %(tier1_position)s,
+    tier2_person    = %(tier2_person)s,
+    tier2_position  = %(tier2_position)s,
+    updated_at      = now()
+WHERE article_url = %(article_url)s
+RETURNING article_id, article_url, company_name,
+          tier1_person, tier1_position, tier2_person, tier2_position, updated_at
+"""
+
+_ACCEPT_SQL = """
+UPDATE apollo.press_articles
+SET data_quality_status = 'ok',
+    reviewed_at         = now(),
+    updated_at          = now()
+WHERE article_url = %(url)s
+"""
+
+
+def update_article_fields(
+    article_url: str,
+    company_name: str,
+    tier1_person: str,
+    tier1_position: str,
+    tier2_person: str,
+    tier2_position: str,
+) -> Optional[dict]:
+    """
+    Aktualizuje pola edytowalne artykułu: firma, osoby, stanowiska.
+    Zwraca zaktualizowany rekord lub None jeśli artykuł nie znaleziony.
+    """
+    import psycopg.rows  # type: ignore
+
+    with get_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(_UPDATE_FIELDS_SQL, {
+                "article_url":   article_url,
+                "company_name":  company_name or None,
+                "tier1_person":  tier1_person or None,
+                "tier1_position": tier1_position or None,
+                "tier2_person":  tier2_person or None,
+                "tier2_position": tier2_position or None,
+            })
+            row = cur.fetchone()
+        conn.commit()
+
+    if row is None:
+        return None
+    return {
+        "article_url":   row["article_url"],
+        "company":       row["company_name"] or "",
+        "tier1_person":  row["tier1_person"] or "",
+        "tier1_position": row["tier1_position"] or "",
+        "tier2_person":  row["tier2_person"] or "",
+        "tier2_position": row["tier2_position"] or "",
+        "updated_at":    row["updated_at"].isoformat() if row.get("updated_at") else "",
+    }
+
+
+def accept_press_article(url: str) -> bool:
+    """
+    Ustawia data_quality_status='ok' dla artykułu (ręczna akceptacja).
+    Zwraca True jeśli rekord istniał i został zaktualizowany.
+    """
+    with get_connection() as conn:
+        cur = conn.execute(_ACCEPT_SQL, {"url": url})
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+
+
 # ---------------------------------------------------------------------------
 # Contact field updates (API endpoints)
 # ---------------------------------------------------------------------------
