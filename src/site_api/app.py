@@ -49,6 +49,8 @@ from news.press_db import (
     insert_campaign_history,
     load_campaign_history_by_email,
     ensure_campaign_history_table,
+    ensure_press_tables,
+    reset_stale_running_statuses,
     article_exists,
     upsert_press_article,
     get_press_article_by_url,
@@ -145,12 +147,28 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    """Tworzy tabelę historii kampanii jeśli nie istnieje."""
+    """Inicjalizacja przy starcie: migracje DB, reset stuck statusów."""
+    # Migracje tabeli press_articles (idempotentne)
+    try:
+        ensure_press_tables()
+        log.info("press_articles table/migrations OK")
+    except Exception:
+        log.exception("Nie udało się wykonać migracji press_articles przy starcie")
+
+    # Tabela historii kampanii
     try:
         ensure_campaign_history_table()
         log.info("press_campaign_history table OK")
     except Exception:
         log.exception("Nie udało się utworzyć tabeli campaign_history przy starcie")
+
+    # Reset artykułów ze statusem 'running' (stuck po restarcie serwera)
+    try:
+        reset_count = reset_stale_running_statuses()
+        if reset_count:
+            log.warning("Startup: zresetowano %d artykułów ze stale 'running' → 'waiting'", reset_count)
+    except Exception:
+        log.exception("Nie udało się zresetować stale 'running' statusów")
 
 
 # ---------------------------------------------------------------------------

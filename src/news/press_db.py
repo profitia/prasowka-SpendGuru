@@ -619,6 +619,30 @@ def update_tier_email(article_url: str, tier: str, email: str) -> Optional[dict]
     return _row_to_contact_response(row)
 
 
+def reset_stale_running_statuses() -> int:
+    """
+    Resetuje artykuły z apollo_status='running' → 'waiting'.
+    Wywołuj przy starcie serwera — jeśli serwer restartuje się w trakcie requesta,
+    status może zostać stuck jako 'running'. Ta funkcja naprawia taki stan.
+    Zwraca liczbę zaktualizowanych rekordów.
+    """
+    with get_connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE apollo.press_articles
+               SET apollo_status = 'waiting', updated_at = now()
+             WHERE apollo_status = 'running'
+            """
+        )
+        count = cur.rowcount or 0
+        conn.commit()
+    if count:
+        log.warning("reset_stale_running_statuses: zresetowano %d artykułów z 'running' → 'waiting'", count)
+    else:
+        log.debug("reset_stale_running_statuses: brak stuck 'running' rekordów")
+    return count
+
+
 def update_apollo_status(article_url: str, apollo_status: str) -> Optional[dict]:
     """
     Aktualizuje apollo_status dla artykułu.

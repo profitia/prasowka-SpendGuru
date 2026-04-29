@@ -1077,7 +1077,11 @@ async function handleRunApollo(e) {
   if (!article) { runningLocks[lockKey] = false; return; }
 
   const contact = getContact(articleId, tier);
-  if (!contact?.email) { runningLocks[lockKey] = false; return; }
+  if (!contact?.email) {
+    showToast('Najpierw zapisz adres email dla tej osoby, a następnie spróbuj ponownie.', 'error', 5000);
+    runningLocks[lockKey] = false;
+    return;
+  }
 
   const confirmEl  = document.getElementById(`copy_confirm_${articleId}_t${tier}`);
   const prevStatus = contact.apollo_status ?? 'waiting';
