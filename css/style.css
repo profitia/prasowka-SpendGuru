@@ -1163,6 +1163,25 @@ a:hover { text-decoration: underline; }
   text-decoration: none;
 }
 
+/* Field save confirmation */
+.field-save-confirm {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  min-height: 1.1em;
+  margin-top: 1px;
+  margin-bottom: 3px;
+  transition: opacity .3s;
+}
+
+.field-save-confirm--ok {
+  color: var(--color-green);
+}
+
+.field-save-confirm--err {
+  color: var(--color-red);
+}
+
 /* ============================================================
    PAGINATION
    ============================================================ */

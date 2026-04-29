@@ -559,6 +559,7 @@ function renderPersonBlock(article, tier) {
                 data-tier="${tier}"
                 data-field="person">Anuluj</button>
       </div>
+      <span class="field-save-confirm" id="person_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
       <div class="card-field card-field--editable">
         <span class="field-label">Stanowisko</span>
         <span class="field-value" id="pos_val_${escAttr(article.id)}_t${tier}">${escHtml(position || '—')}</span>
@@ -582,6 +583,7 @@ function renderPersonBlock(article, tier) {
                 data-tier="${tier}"
                 data-field="position">Anuluj</button>
       </div>
+      <span class="field-save-confirm" id="pos_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
       <div class="email-field">
         <label class="field-label" for="${inputId}">Email</label>
         <div class="email-input-row">
@@ -676,6 +678,7 @@ function renderCard(article) {
             data-article-id="${escAttr(article.id)}"
             data-field="company">Anuluj</button>
   </div>
+  <span class="field-save-confirm" id="company_confirm_${escAttr(article.id)}" aria-live="polite"></span>
 
   ${tier1Html}
   ${tier2Html}
@@ -1509,9 +1512,10 @@ function _fieldIds(field, articleId, tier) {
   const prefix = field === 'company' ? 'company' : field === 'person' ? 'person' : 'pos';
   const suffix = tier ? `_${articleId}_t${tier}` : `_${articleId}`;
   return {
-    valId:   `${prefix}_val${suffix}`,
-    editId:  `${prefix}_edit${suffix}`,
-    inputId: `${prefix}_input${suffix}`,
+    valId:     `${prefix}_val${suffix}`,
+    editId:    `${prefix}_edit${suffix}`,
+    inputId:   `${prefix}_input${suffix}`,
+    confirmId: `${prefix}_confirm${suffix}`,
   };
 }
 
@@ -1539,7 +1543,7 @@ function handleCancelField(e) {
   if (!btn) return;
 
   const { field, articleId, tier } = btn.dataset;
-  const { valId, editId, inputId } = _fieldIds(field, articleId, tier);
+  const { valId, editId, inputId } = _fieldIds(field, articleId, tier);  // confirmId not needed on cancel
 
   const valEl   = document.getElementById(valId);
   const editEl  = document.getElementById(editId);
@@ -1564,19 +1568,24 @@ function handleCancelField(e) {
 
 async function handleOkField(e) {
   const btn = e.target.closest('.btn-ok-field');
-  if (!btn) return;
+  if (!btn || btn.disabled) return;
 
   const { field, articleId, tier } = btn.dataset;
-  const { valId, editId, inputId } = _fieldIds(field, articleId, tier);
+  const { valId, editId, inputId, confirmId } = _fieldIds(field, articleId, tier);
 
-  const inputEl = document.getElementById(inputId);
-  const valEl   = document.getElementById(valId);
-  const editEl  = document.getElementById(editId);
+  const inputEl   = document.getElementById(inputId);
+  const valEl     = document.getElementById(valId);
+  const editEl    = document.getElementById(editId);
+  const confirmEl = document.getElementById(confirmId);
   if (!inputEl) return;
 
   const newValue = inputEl.value.trim();
   const article  = allArticles.find(a => a.id === articleId);
   if (!article) return;
+
+  // Disable OK during save to prevent duplicate clicks
+  btn.disabled = true;
+  btn.textContent = '…';
 
   // Update local article object
   if (field === 'company')  article.company = newValue;
@@ -1594,6 +1603,10 @@ async function handleOkField(e) {
   if (valEl)  valEl.hidden  = false;
   if (editEl) editEl.hidden = true;
 
+  // Re-enable OK button (it's hidden now, but reset state for next open)
+  btn.disabled = false;
+  btn.textContent = 'OK';
+
   // If person name/position changed → rebuild command block (uses article fields for Apollo cmd)
   if ((field === 'person' || field === 'position') && tier) {
     const tierNum = parseInt(tier, 10);
@@ -1606,7 +1619,7 @@ async function handleOkField(e) {
     if (contact) saveContact(articleId, tierNum, article, email, status);
   }
 
-  // Persist to API
+  // Persist to API and show feedback
   if (apiAvailable && API_BASE_URL && article.source_url) {
     const res = await postToApi('/api/articles/fields', {
       article_url:    article.source_url,
@@ -1616,8 +1629,27 @@ async function handleOkField(e) {
       tier2_person:   article.tier2_person   ?? '',
       tier2_position: article.tier2_position ?? '',
     });
-    if (!res.ok) {
+    if (res.ok) {
+      if (confirmEl) {
+        confirmEl.textContent = 'Zapisano ✔';
+        confirmEl.classList.add('field-save-confirm--ok');
+        confirmEl.classList.remove('field-save-confirm--err');
+        setTimeout(() => { confirmEl.textContent = ''; confirmEl.classList.remove('field-save-confirm--ok'); }, 3000);
+      }
+    } else {
+      if (confirmEl) {
+        confirmEl.textContent = 'Zapisano lokalnie (błąd bazy)';
+        confirmEl.classList.add('field-save-confirm--err');
+        confirmEl.classList.remove('field-save-confirm--ok');
+        setTimeout(() => { confirmEl.textContent = ''; confirmEl.classList.remove('field-save-confirm--err'); }, 4000);
+      }
       showToast('Nie udało się zapisać w bazie — dane zaktualizowane lokalnie.', 'error', 4000);
+    }
+  } else {
+    if (confirmEl) {
+      confirmEl.textContent = 'Zapisano lokalnie';
+      confirmEl.classList.add('field-save-confirm--ok');
+      setTimeout(() => { confirmEl.textContent = ''; confirmEl.classList.remove('field-save-confirm--ok'); }, 3000);
     }
   }
 }
