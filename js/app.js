@@ -536,54 +536,60 @@ function renderPersonBlock(article, tier) {
         <span class="tier-label">Osoba Tier ${tier}</span>
         <span class="apollo-badge ${badgeClass}" id="status_badge_${escAttr(article.id)}_t${tier}">${escHtml(statusLabel(apolloStatus))}</span>
       </div>
-      <div class="card-field card-field--editable">
-        <span class="field-label">Imię i nazwisko</span>
-        <span class="field-value" id="person_val_${escAttr(article.id)}_t${tier}">${escHtml(person)}</span>
-        <button class="btn-edit-field"
-                data-article-id="${escAttr(article.id)}"
-                data-tier="${tier}"
-                data-field="person">Edytuj</button>
+      <div class="editable-field-wrap">
+        <label class="field-label">Imię i nazwisko</label>
+        <div class="field-inline-row">
+          <input type="text"
+                 class="field-input-inline"
+                 id="person_input_${escAttr(article.id)}_t${tier}"
+                 data-article-id="${escAttr(article.id)}"
+                 data-tier="${tier}"
+                 data-field="person"
+                 value="${escAttr(person)}"
+                 placeholder="Imię i nazwisko"
+                 disabled>
+          <button class="btn-edit-field"
+                  data-article-id="${escAttr(article.id)}"
+                  data-tier="${tier}"
+                  data-field="person">Edytuj</button>
+          <button class="btn-ok-field" hidden
+                  data-article-id="${escAttr(article.id)}"
+                  data-tier="${tier}"
+                  data-field="person">OK</button>
+          <button class="btn-cancel-field" hidden
+                  data-article-id="${escAttr(article.id)}"
+                  data-tier="${tier}"
+                  data-field="person">Anuluj</button>
+        </div>
+        <span class="field-save-confirm" id="person_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
       </div>
-      <div class="field-edit-row" id="person_edit_${escAttr(article.id)}_t${tier}" hidden>
-        <input type="text"
-               class="field-input"
-               id="person_input_${escAttr(article.id)}_t${tier}"
-               value="${escAttr(person)}"
-               placeholder="Imię i nazwisko">
-        <button class="btn-ok-field"
-                data-article-id="${escAttr(article.id)}"
-                data-tier="${tier}"
-                data-field="person">OK</button>
-        <button class="btn-cancel-field"
-                data-article-id="${escAttr(article.id)}"
-                data-tier="${tier}"
-                data-field="person">Anuluj</button>
+      <div class="editable-field-wrap">
+        <label class="field-label">Stanowisko</label>
+        <div class="field-inline-row">
+          <input type="text"
+                 class="field-input-inline"
+                 id="pos_input_${escAttr(article.id)}_t${tier}"
+                 data-article-id="${escAttr(article.id)}"
+                 data-tier="${tier}"
+                 data-field="position"
+                 value="${escAttr(position || '')}"
+                 placeholder="Stanowisko"
+                 disabled>
+          <button class="btn-edit-field"
+                  data-article-id="${escAttr(article.id)}"
+                  data-tier="${tier}"
+                  data-field="position">Edytuj</button>
+          <button class="btn-ok-field" hidden
+                  data-article-id="${escAttr(article.id)}"
+                  data-tier="${tier}"
+                  data-field="position">OK</button>
+          <button class="btn-cancel-field" hidden
+                  data-article-id="${escAttr(article.id)}"
+                  data-tier="${tier}"
+                  data-field="position">Anuluj</button>
+        </div>
+        <span class="field-save-confirm" id="pos_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
       </div>
-      <span class="field-save-confirm" id="person_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
-      <div class="card-field card-field--editable">
-        <span class="field-label">Stanowisko</span>
-        <span class="field-value" id="pos_val_${escAttr(article.id)}_t${tier}">${escHtml(position || '—')}</span>
-        <button class="btn-edit-field"
-                data-article-id="${escAttr(article.id)}"
-                data-tier="${tier}"
-                data-field="position">Edytuj</button>
-      </div>
-      <div class="field-edit-row" id="pos_edit_${escAttr(article.id)}_t${tier}" hidden>
-        <input type="text"
-               class="field-input"
-               id="pos_input_${escAttr(article.id)}_t${tier}"
-               value="${escAttr(position || '')}"
-               placeholder="Stanowisko">
-        <button class="btn-ok-field"
-                data-article-id="${escAttr(article.id)}"
-                data-tier="${tier}"
-                data-field="position">OK</button>
-        <button class="btn-cancel-field"
-                data-article-id="${escAttr(article.id)}"
-                data-tier="${tier}"
-                data-field="position">Anuluj</button>
-      </div>
-      <span class="field-save-confirm" id="pos_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
       <div class="email-field">
         <label class="field-label" for="${inputId}">Email</label>
         <div class="email-input-row">
@@ -658,27 +664,29 @@ function renderCard(article) {
 
   <hr class="card-divider">
 
-  <div class="card-field card-field--editable">
-    <span class="field-label">Firma</span>
-    <span class="field-value" id="company_val_${escAttr(article.id)}">${escHtml(article.company || '—')}</span>
-    <button class="btn-edit-field"
-            data-article-id="${escAttr(article.id)}"
-            data-field="company">Edytuj</button>
+  <div class="editable-field-wrap">
+    <label class="field-label">Firma</label>
+    <div class="field-inline-row">
+      <input type="text"
+             class="field-input-inline"
+             id="company_input_${escAttr(article.id)}"
+             data-article-id="${escAttr(article.id)}"
+             data-field="company"
+             value="${escAttr(article.company || '')}"
+             placeholder="Nazwa firmy"
+             disabled>
+      <button class="btn-edit-field"
+              data-article-id="${escAttr(article.id)}"
+              data-field="company">Edytuj</button>
+      <button class="btn-ok-field" hidden
+              data-article-id="${escAttr(article.id)}"
+              data-field="company">OK</button>
+      <button class="btn-cancel-field" hidden
+              data-article-id="${escAttr(article.id)}"
+              data-field="company">Anuluj</button>
+    </div>
+    <span class="field-save-confirm" id="company_confirm_${escAttr(article.id)}" aria-live="polite"></span>
   </div>
-  <div class="field-edit-row" id="company_edit_${escAttr(article.id)}" hidden>
-    <input type="text"
-           class="field-input"
-           id="company_input_${escAttr(article.id)}"
-           value="${escAttr(article.company || '')}"
-           placeholder="Nazwa firmy">
-    <button class="btn-ok-field"
-            data-article-id="${escAttr(article.id)}"
-            data-field="company">OK</button>
-    <button class="btn-cancel-field"
-            data-article-id="${escAttr(article.id)}"
-            data-field="company">Anuluj</button>
-  </div>
-  <span class="field-save-confirm" id="company_confirm_${escAttr(article.id)}" aria-live="polite"></span>
 
   ${tier1Html}
   ${tier2Html}
@@ -1504,78 +1512,74 @@ async function handleRejectArticle(e) {
 // ============================================================
 
 /**
- * Returns the element-id prefix and suffix for a given field + articleId + tier.
+ * Returns element IDs for a given editable field.
  * field: "company" | "person" | "position"
- * tier:  "1" | "2" | undefined
+ * tier:  "1" | "2" | undefined/null
  */
 function _fieldIds(field, articleId, tier) {
   const prefix = field === 'company' ? 'company' : field === 'person' ? 'person' : 'pos';
   const suffix = tier ? `_${articleId}_t${tier}` : `_${articleId}`;
   return {
-    valId:     `${prefix}_val${suffix}`,
-    editId:    `${prefix}_edit${suffix}`,
     inputId:   `${prefix}_input${suffix}`,
     confirmId: `${prefix}_confirm${suffix}`,
   };
 }
 
+/** Enter edit mode: enable input, swap buttons */
 function handleEditField(e) {
-  const btn = e.target.closest('.btn-edit-field');
-  if (!btn) return;
+  const editBtn = e.target.closest('.btn-edit-field');
+  if (!editBtn) return;
 
-  const { field, articleId, tier } = btn.dataset;
-  const { valId, editId, inputId } = _fieldIds(field, articleId, tier);
-
-  const valEl   = document.getElementById(valId);
-  const editEl  = document.getElementById(editId);
+  const { field, articleId, tier } = editBtn.dataset;
+  const { inputId } = _fieldIds(field, articleId, tier);
   const inputEl = document.getElementById(inputId);
-  if (!valEl || !editEl || !inputEl) return;
+  if (!inputEl) return;
 
-  valEl.hidden  = true;
-  btn.hidden    = true;
-  editEl.hidden = false;
+  const wrap = inputEl.closest('.field-inline-row');
+  if (!wrap) return;
+
+  // Store original value for cancel
+  inputEl.dataset.origValue = inputEl.value;
+
+  inputEl.disabled = false;
   inputEl.focus();
   inputEl.select();
+
+  wrap.querySelector('.btn-edit-field').hidden   = true;
+  wrap.querySelector('.btn-ok-field').hidden     = false;
+  wrap.querySelector('.btn-cancel-field').hidden = false;
 }
 
+/** Cancel: restore original value, go back to read-only */
 function handleCancelField(e) {
-  const btn = e.target.closest('.btn-cancel-field');
-  if (!btn) return;
+  const cancelBtn = e.target.closest('.btn-cancel-field');
+  if (!cancelBtn) return;
 
-  const { field, articleId, tier } = btn.dataset;
-  const { valId, editId, inputId } = _fieldIds(field, articleId, tier);  // confirmId not needed on cancel
-
-  const valEl   = document.getElementById(valId);
-  const editEl  = document.getElementById(editId);
+  const { field, articleId, tier } = cancelBtn.dataset;
+  const { inputId } = _fieldIds(field, articleId, tier);
   const inputEl = document.getElementById(inputId);
+  if (!inputEl) return;
 
-  // Restore original value from allArticles
-  const article = allArticles.find(a => a.id === articleId);
-  if (article && inputEl) {
-    if (field === 'company')  inputEl.value = article.company || '';
-    if (field === 'person')   inputEl.value = tier === '1' ? (article.tier1_person || '') : (article.tier2_person || '');
-    if (field === 'position') inputEl.value = tier === '1' ? (article.tier1_position || '') : (article.tier2_position || '');
-  }
+  const wrap = inputEl.closest('.field-inline-row');
+  if (!wrap) return;
 
-  // Restore display — find the edit button back
-  const editBtnSel = tier
-    ? `.btn-edit-field[data-article-id="${CSS.escape(articleId)}"][data-field="${field}"][data-tier="${tier}"]`
-    : `.btn-edit-field[data-article-id="${CSS.escape(articleId)}"][data-field="${field}"]:not([data-tier])`;
-  document.querySelectorAll(editBtnSel).forEach(b => { b.hidden = false; });
-  if (valEl)  valEl.hidden  = false;
-  if (editEl) editEl.hidden = true;
+  // Restore original value
+  inputEl.value    = inputEl.dataset.origValue ?? inputEl.value;
+  inputEl.disabled = true;
+
+  wrap.querySelector('.btn-edit-field').hidden   = false;
+  wrap.querySelector('.btn-ok-field').hidden     = true;
+  wrap.querySelector('.btn-cancel-field').hidden = true;
 }
 
+/** OK: save value, go back to read-only, show confirmation */
 async function handleOkField(e) {
-  const btn = e.target.closest('.btn-ok-field');
-  if (!btn || btn.disabled) return;
+  const okBtn = e.target.closest('.btn-ok-field');
+  if (!okBtn || okBtn.disabled) return;
 
-  const { field, articleId, tier } = btn.dataset;
-  const { valId, editId, inputId, confirmId } = _fieldIds(field, articleId, tier);
-
+  const { field, articleId, tier } = okBtn.dataset;
+  const { inputId, confirmId } = _fieldIds(field, articleId, tier);
   const inputEl   = document.getElementById(inputId);
-  const valEl     = document.getElementById(valId);
-  const editEl    = document.getElementById(editId);
   const confirmEl = document.getElementById(confirmId);
   if (!inputEl) return;
 
@@ -1583,31 +1587,19 @@ async function handleOkField(e) {
   const article  = allArticles.find(a => a.id === articleId);
   if (!article) return;
 
-  // Disable OK during save to prevent duplicate clicks
-  btn.disabled = true;
-  btn.textContent = '…';
+  // Block button during async save
+  okBtn.disabled    = true;
+  okBtn.textContent = '…';
+
+  // Normalise displayed value
+  inputEl.value = newValue;
 
   // Update local article object
   if (field === 'company')  article.company = newValue;
   if (field === 'person')   { if (tier === '1') article.tier1_person = newValue; else article.tier2_person = newValue; }
   if (field === 'position') { if (tier === '1') article.tier1_position = newValue; else article.tier2_position = newValue; }
 
-  // Update displayed value
-  if (valEl) valEl.textContent = newValue || '—';
-
-  // Restore edit button + hide edit row
-  const editBtnSel = tier
-    ? `.btn-edit-field[data-article-id="${CSS.escape(articleId)}"][data-field="${field}"][data-tier="${tier}"]`
-    : `.btn-edit-field[data-article-id="${CSS.escape(articleId)}"][data-field="${field}"]:not([data-tier])`;
-  document.querySelectorAll(editBtnSel).forEach(b => { b.hidden = false; });
-  if (valEl)  valEl.hidden  = false;
-  if (editEl) editEl.hidden = true;
-
-  // Re-enable OK button (it's hidden now, but reset state for next open)
-  btn.disabled = false;
-  btn.textContent = 'OK';
-
-  // If person name/position changed → rebuild command block (uses article fields for Apollo cmd)
+  // If person name/position changed → rebuild command block
   if ((field === 'person' || field === 'position') && tier) {
     const tierNum = parseInt(tier, 10);
     const contact = getContact(articleId, tierNum);
@@ -1615,11 +1607,11 @@ async function handleOkField(e) {
     const status  = contact?.apollo_status ?? 'waiting';
     const cmdEl   = document.getElementById(`cmd_${articleId}_t${tier}`);
     if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tierNum, email, article, status);
-    // Sync updated name to localStorage contact
     if (contact) saveContact(articleId, tierNum, article, email, status);
   }
 
   // Persist to API and show feedback
+  let savedOk = false;
   if (apiAvailable && API_BASE_URL && article.source_url) {
     const res = await postToApi('/api/articles/fields', {
       article_url:    article.source_url,
@@ -1629,28 +1621,31 @@ async function handleOkField(e) {
       tier2_person:   article.tier2_person   ?? '',
       tier2_position: article.tier2_position ?? '',
     });
-    if (res.ok) {
-      if (confirmEl) {
-        confirmEl.textContent = 'Zapisano ✔';
-        confirmEl.classList.add('field-save-confirm--ok');
-        confirmEl.classList.remove('field-save-confirm--err');
-        setTimeout(() => { confirmEl.textContent = ''; confirmEl.classList.remove('field-save-confirm--ok'); }, 3000);
-      }
+    savedOk = res.ok;
+    if (!res.ok) showToast('Nie udało się zapisać w bazie — dane zaktualizowane lokalnie.', 'error', 4000);
+  }
+
+  // Return to read-only
+  const wrap = inputEl.closest('.field-inline-row');
+  if (wrap) {
+    inputEl.disabled = true;
+    okBtn.disabled    = false;
+    okBtn.textContent = 'OK';
+    wrap.querySelector('.btn-edit-field').hidden   = false;
+    wrap.querySelector('.btn-ok-field').hidden     = true;
+    wrap.querySelector('.btn-cancel-field').hidden = true;
+  }
+
+  // Confirmation message
+  if (confirmEl) {
+    if (apiAvailable && API_BASE_URL) {
+      confirmEl.textContent = savedOk ? 'Zapisano ✔' : 'Zapisano lokalnie (błąd bazy)';
+      confirmEl.className   = `field-save-confirm ${savedOk ? 'field-save-confirm--ok' : 'field-save-confirm--err'}`;
     } else {
-      if (confirmEl) {
-        confirmEl.textContent = 'Zapisano lokalnie (błąd bazy)';
-        confirmEl.classList.add('field-save-confirm--err');
-        confirmEl.classList.remove('field-save-confirm--ok');
-        setTimeout(() => { confirmEl.textContent = ''; confirmEl.classList.remove('field-save-confirm--err'); }, 4000);
-      }
-      showToast('Nie udało się zapisać w bazie — dane zaktualizowane lokalnie.', 'error', 4000);
-    }
-  } else {
-    if (confirmEl) {
       confirmEl.textContent = 'Zapisano lokalnie';
-      confirmEl.classList.add('field-save-confirm--ok');
-      setTimeout(() => { confirmEl.textContent = ''; confirmEl.classList.remove('field-save-confirm--ok'); }, 3000);
+      confirmEl.className   = 'field-save-confirm field-save-confirm--ok';
     }
+    setTimeout(() => { confirmEl.textContent = ''; confirmEl.className = 'field-save-confirm'; }, 3000);
   }
 }
 
