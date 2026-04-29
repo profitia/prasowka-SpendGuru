@@ -19,9 +19,11 @@ Deployment (Render/Railway):
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
+import subprocess
 import sys
 from datetime import date as _date
 from pathlib import Path
@@ -62,7 +64,17 @@ from news.press_db import (
 # ---------------------------------------------------------------------------
 # Apollo runner config
 # ---------------------------------------------------------------------------
-APOLLO_TIMEOUT = int(os.environ.get("APOLLO_TIMEOUT", "180"))
+APOLLO_TIMEOUT   = int(os.environ.get("APOLLO_TIMEOUT", "180"))
+
+# Local orchestrator mode: when APOLLO_ROOT is set the endpoint calls the full
+# Kampanie Apollo orchestrator via subprocess instead of the cloud runner.
+# Set APOLLO_ROOT to the absolute path of the "Kampanie Apollo" workspace folder.
+APOLLO_ROOT     = os.environ.get("APOLLO_ROOT", "").strip()
+APOLLO_PYTHON   = os.environ.get("APOLLO_PYTHON", sys.executable)
+APOLLO_CAMPAIGN = os.environ.get("APOLLO_CAMPAIGN", "spendguru_market_news")
+
+# Recipient for approval / notification emails (cloud path)
+NOTIFICATION_EMAIL = os.environ.get("NOTIFICATION_EMAIL", "tomasz.uscinski@profitia.pl")
 
 # ---------------------------------------------------------------------------
 # GitHub Actions pipeline trigger config
@@ -216,6 +228,7 @@ class RunAutoRequest(BaseModel):
     email: str
     tier: str
     job_title: str = ""
+    context: str = ""  # article context / trigger summary — forwarded to orchestrator
 
     @field_validator("email")
     @classmethod
@@ -643,34 +656,187 @@ async def save_status(body: StatusRequest) -> dict:
 @app.post("/api/apollo/run-auto")
 async def run_apollo_auto(body: RunAutoRequest) -> dict:
     """
-    Uruchamia Apollo runner dla wybranego artykułu.
-    Importuje i wywołuje apollo_runner.run_auto() bezpośrednio.
-    Nie wymaga lokalnych ścieżek macOS — działa na Render/Railway.
+    Uruchamia kampanię Apollo dla wybranego artykułu.
 
-    ENV: APOLLO_API_KEY (wymagany), APOLLO_SEQUENCE_ID (opcjonalny)
+    Dwa tryby:
+    - LOCAL (APOLLO_ROOT ustawiony): wywołuje pełny orchestrator Kampanie Apollo
+      via subprocess (manual mode). Obsługuje AI wiadomości, dynamiczną sekwencję
+      i email approwalowy.
+    - CLOUD (APOLLO_ROOT nie ustawiony, Render): używa uproszczonego apollo_runner
+      + wysyła email approwalowy bezpośrednio przez Office365 Graph API.
+
+    ENV wymagane dla trybu CLOUD:
+      APOLLO_API_KEY, APOLLO_SEQUENCE_ID, APOLLO_SENDER_EMAIL_ACCOUNT_ID
+      MSAL_TOKEN_CACHE_B64 (dla emaila approwalowego)
+
+    ENV wymagane dla trybu LOCAL:
+      APOLLO_ROOT — ścieżka do workspace'u Kampanie Apollo
+      APOLLO_PYTHON — (opcjonalnie) python z venv Kampanie Apollo
     """
+    mode = "local_orchestrator" if APOLLO_ROOT else "cloud_runner"
     log.info(
-        "POST /api/apollo/run-auto: %s (tier=%s, email=%s)",
-        body.article_url[:80], body.tier, body.email,
+        "[apollo] POST /api/apollo/run-auto: url=%s tier=%s email=%s mode=%s",
+        body.article_url[:80], body.tier, body.email, mode,
+    )
+    log.info(
+        "[apollo] Payload: company=%r full_name=%r job_title=%r context_len=%d",
+        body.company_name[:50] if body.company_name else "",
+        body.full_name[:50] if body.full_name else "",
+        body.job_title[:50] if body.job_title else "",
+        len(body.context),
     )
 
-    # Niezwłocznie oznacz jako running
+    # Mark as running immediately
     try:
         update_apollo_status(body.article_url, "running")
-        log.info("apollo_status → running dla %s", body.article_url[:60])
+        log.info("[apollo] apollo_status → running dla %s", body.article_url[:60])
     except Exception:
-        log.warning("Nie udało się ustawić running przed startem runnera (ignorujem)")
+        log.warning("[apollo] Nie udało się ustawić running (ignorujem)")
 
     def _revert_to_waiting() -> None:
         try:
             update_apollo_status(body.article_url, "waiting")
-            log.info("apollo_status → waiting (revert) dla %s", body.article_url[:60])
+            log.info("[apollo] apollo_status → waiting (revert)")
         except Exception:
-            log.exception("Nie udało się zrevertować apollo_status do waiting")
+            log.exception("[apollo] Nie udało się zrevertować do waiting")
 
+    def _save_history(campaign_status: str = "sent") -> None:
+        try:
+            _articles = load_press_articles()
+            _art = next((a for a in _articles if a.get("source_url") == body.article_url), {})
+            insert_campaign_history(
+                email=body.email,
+                full_name=body.full_name,
+                company_name=body.company_name or _art.get("company", ""),
+                job_title=body.job_title,
+                tier=body.tier,
+                article_url=body.article_url,
+                article_title=_art.get("title", ""),
+                source_name=_art.get("source_name", ""),
+                press_type=_art.get("press_type", ""),
+                industry=_art.get("industry", ""),
+                campaign_status=campaign_status,
+            )
+        except Exception:
+            log.exception("[apollo] Nie udało się zapisać historii kampanii")
+
+    # -------------------------------------------------------------------
+    # PATH A — LOCAL: pełny orchestrator Kampanie Apollo via subprocess
+    # -------------------------------------------------------------------
+    if APOLLO_ROOT:
+        log.info("[apollo] Tryb LOCAL — orchestrator w: %s", APOLLO_ROOT)
+
+        contacts_list = [{
+            "email":        body.email,
+            "tier":         body.tier,
+            "full_name":    body.full_name,
+            "job_title":    body.job_title,
+            "company_name": body.company_name,
+        }]
+        contacts_json_str = _json.dumps(contacts_list, ensure_ascii=False)
+
+        cmd = [
+            APOLLO_PYTHON,
+            "src/news/orchestrator.py",
+            "manual",
+            "--article-url",   body.article_url,
+            "--contacts-json", contacts_json_str,
+            "--campaign",      APOLLO_CAMPAIGN,
+            "--verbose",
+        ]
+        log.info("[apollo] Komenda: %s src/news/orchestrator.py manual --article-url %s ...",
+                 APOLLO_PYTHON, body.article_url[:60])
+
+        def _run_subprocess() -> subprocess.CompletedProcess:
+            env = {**os.environ, "PYTHONPATH": os.path.join(APOLLO_ROOT, "src")}
+            return subprocess.run(
+                cmd,
+                cwd=APOLLO_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=APOLLO_TIMEOUT,
+                env=env,
+            )
+
+        try:
+            proc = await asyncio.to_thread(_run_subprocess)
+            log.info("[apollo] orchestrator exit=%d stdout_len=%d",
+                     proc.returncode, len(proc.stdout))
+            if proc.stderr:
+                log.debug("[apollo] orchestrator stderr (last 2000):\n%s", proc.stderr[-2000:])
+        except asyncio.TimeoutError:
+            _revert_to_waiting()
+            return {
+                "ok": False,
+                "message": f"Timeout ({APOLLO_TIMEOUT}s) — orchestrator nie odpowiedział. Status przywrócony.",
+                "details": {},
+            }
+        except Exception as exc:
+            log.exception("[apollo] Błąd wywołania subprocess")
+            _revert_to_waiting()
+            return {"ok": False, "message": f"Błąd subprocess: {exc}", "details": {}}
+
+        if proc.returncode != 0:
+            err_snippet = (proc.stderr or "")[-500:]
+            log.error("[apollo] Orchestrator błąd exit=%d: %s", proc.returncode, err_snippet)
+            _revert_to_waiting()
+            return {
+                "ok": False,
+                "message": f"Orchestrator zakończył błędem (exit {proc.returncode}). Status przywrócony.",
+                "details": {"stderr": err_snippet},
+            }
+
+        # Parse JSON result from stdout
+        orch_result: dict = {}
+        try:
+            out = proc.stdout.strip()
+            # The orchestrator prints JSON as last block — find last '{'
+            json_start = out.rfind('{')
+            if json_start >= 0:
+                orch_result = _json.loads(out[json_start:])
+        except Exception as exc:
+            log.warning("[apollo] Nie udało się sparsować JSON orchestratora: %s", exc)
+
+        status = orch_result.get("status", "")
+        log.info("[apollo] orchestrator status=%s sequence=%s enrolled=%s",
+                 status,
+                 orch_result.get("sequence_name", ""),
+                 orch_result.get("contacts_enrolled", "?"))
+
+        if status == "MANUAL_COMPLETE":
+            try:
+                update_apollo_status(body.article_url, "sent")
+                log.info("[apollo] apollo_status → sent (orchestrator sukces)")
+            except Exception:
+                log.exception("[apollo] Nie udało się zapisać sent")
+            _save_history("sent")
+            return {
+                "ok": True,
+                "message": (
+                    f"Kampania Apollo uruchomiona ✔"
+                    f" | sekwencja: {orch_result.get('sequence_name', '')}"
+                    f" | enrolled: {orch_result.get('contacts_enrolled', 0)}"
+                ),
+                "details": orch_result,
+            }
+        else:
+            _revert_to_waiting()
+            return {
+                "ok": False,
+                "message": f"Orchestrator zakończył ze statusem: {status or 'UNKNOWN'}. Status przywrócony.",
+                "details": orch_result,
+            }
+
+    # -------------------------------------------------------------------
+    # PATH B — CLOUD: apollo_runner + email approwalowy
+    # -------------------------------------------------------------------
+    log.info("[apollo] Tryb CLOUD — apollo_runner + email approwalowy")
+
+    # Step 1: Apollo runner
     try:
         from apollo_runner import run_auto
-        result = run_auto(
+        result = await asyncio.to_thread(
+            run_auto,
             article_url=body.article_url,
             email=body.email,
             full_name=body.full_name,
@@ -678,8 +844,9 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
             job_title=body.job_title,
             tier=body.tier,
         )
+        log.info("[apollo] apollo_runner ok=%s details=%s", result.get("ok"), result.get("details"))
     except Exception as exc:
-        log.exception("Błąd apollo_runner w /api/apollo/run-auto")
+        log.exception("[apollo] Błąd apollo_runner")
         _revert_to_waiting()
         return {
             "ok": False,
@@ -689,48 +856,58 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
 
     ok = result.get("ok", False)
 
-    if ok:
-        try:
-            update_apollo_status(body.article_url, "sent")
-            log.info("apollo_status → sent dla %s", body.article_url[:60])
-        except Exception:
-            log.exception("Nie udało się zaktualizować apollo_status po run-auto")
-
-        # Zapisz do historii kampanii (wzbogać o dane artykułu z DB)
-        try:
-            _articles = load_press_articles()
-            _art_info = next(
-                (a for a in _articles if a.get("source_url") == body.article_url),
-                {},
-            )
-            insert_campaign_history(
-                email=body.email,
-                full_name=body.full_name,
-                company_name=body.company_name or _art_info.get("company", ""),
-                job_title=body.job_title,
-                tier=body.tier,
-                article_url=body.article_url,
-                article_title=_art_info.get("title", ""),
-                source_name=_art_info.get("source_name", ""),
-                press_type=_art_info.get("press_type", ""),
-                industry=_art_info.get("industry", ""),
-                campaign_status="sent",
-            )
-        except Exception:
-            log.exception("Nie udało się zapisać historii kampanii")
-
-        return {
-            "ok": True,
-            "message": result.get("message", "Kampania Apollo uruchomiona ✔"),
-            "details": result.get("details", {}),
-        }
-    else:
+    if not ok:
         _revert_to_waiting()
         return {
             "ok": False,
-            "message": result.get("message", "Nie udało się uruchomić kampanii Apollo. Status przywrócony do Do wysłania."),
+            "message": result.get("message", "Nie udało się uruchomić kampanii Apollo. Status przywrócony."),
             "details": result.get("details", {}),
         }
+
+    # Apollo runner succeeded
+    try:
+        update_apollo_status(body.article_url, "sent")
+        log.info("[apollo] apollo_status → sent")
+    except Exception:
+        log.exception("[apollo] Nie udało się zapisać sent")
+
+    _save_history("sent")
+
+    # Step 2: Approval email
+    _articles = load_press_articles()
+    _art_info = next((a for a in _articles if a.get("source_url") == body.article_url), {})
+    log.info(
+        "[apollo] Wysyłam email approwalowy do %s (artykuł: %s)",
+        NOTIFICATION_EMAIL,
+        _art_info.get("title", body.article_url)[:80],
+    )
+    try:
+        from news.email_sender import send_approval_email
+        email_sent = await asyncio.to_thread(
+            send_approval_email,
+            article_title=_art_info.get("title", "") or body.article_url,
+            article_url=body.article_url,
+            company_name=body.company_name or _art_info.get("company", ""),
+            full_name=body.full_name,
+            email=body.email,
+            job_title=body.job_title,
+            tier=body.tier,
+            campaign_name=APOLLO_CAMPAIGN,
+        )
+        log.info("[apollo] Email approwalowy: %s", "wysłany ✔" if email_sent else "NIEUDANY ✘")
+    except Exception as exc:
+        log.warning("[apollo] Email approwalowy exception: %s", exc)
+        email_sent = False
+
+    msg = result.get("message", "Kampania Apollo uruchomiona ✔")
+    if not email_sent:
+        msg += " [UWAGA: email powiadomienie nie wysłane — sprawdź MSAL_TOKEN_CACHE_B64]"
+
+    return {
+        "ok": True,
+        "message": msg,
+        "details": result.get("details", {}),
+    }
 
 
 @app.get("/api/campaign-history")

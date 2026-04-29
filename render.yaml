@@ -6,8 +6,17 @@
 #   3. Ustaw sekrety w Render Dashboard → Environment:
 #        DATABASE_URL   — Neon Postgres connection string
 #        APOLLO_API_KEY — klucz API Apollo.io
-#        APOLLO_SEQUENCE_ID — (opcjonalnie) ID sekwencji do której dodawać kontakty
-#   4. URL usługi (np. https://prasowka-spendguru-api.onrender.com)
+#        APOLLO_SEQUENCE_ID — ID sekwencji do której dodawać kontakty (cloud runner)
+#   4. Dla emaili approwalowych (cloud runner):
+#        AZURE_CLIENT_ID       — Azure App Client ID
+#        AZURE_TENANT_ID       — Azure Tenant ID
+#        MAIL_FROM             — adres email nadawcy (tomasz.uscinski@profitia.pl)
+#        MSAL_TOKEN_CACHE_B64  — base64 z .token_cache.json (wygeneruj lokalnie)
+#        NOTIFICATION_EMAIL    — odbiorca powiadomień (domyślnie: tomasz.uscinski@profitia.pl)
+#   5. Dla trybu lokalnego (NIE Render):
+#        APOLLO_ROOT    — ścieżka do workspace Kampanie Apollo
+#        APOLLO_PYTHON  — python z venv (opcjonalnie)
+#   6. URL usługi (np. https://prasowka-spendguru-api.onrender.com)
 #      wstaw do js/config.js jako window.PRASOWKA_API_URL
 
 services:
@@ -23,13 +32,24 @@ services:
       - key: APOLLO_API_KEY
         sync: false          # Apollo.io API key — ustaw ręcznie w Render Dashboard
       - key: APOLLO_SEQUENCE_ID
-        sync: false          # ID sekwencji Apollo — opcjonalny, ustaw w Render Dashboard
+        sync: false          # ID sekwencji Apollo (cloud runner) — ustaw w Render Dashboard
       - key: APOLLO_SENDER_EMAIL_ACCOUNT_ID
-        sync: false          # ID skrzynki nadawczej — wymagany, ustaw w Render Dashboard
-      # - key: APOLLO_SENDER_EMAIL_ACCOUNT_IDS
-      #   sync: false        # Wiele mailboxów (lista po przecinku) — TODO: round-robin
+        sync: false          # ID skrzynki nadawczej Apollo — wymagany
       - key: CORS_ORIGINS
         value: "https://profitia.github.io,http://localhost:8000,http://localhost:8080"
       - key: APP_ENV
         value: production
+      # --- Email powiadomienia approwalowe (cloud runner) ---
+      - key: AZURE_CLIENT_ID
+        sync: false          # Azure App Client ID dla Office365
+      - key: AZURE_TENANT_ID
+        sync: false          # Azure Tenant ID dla Office365
+      - key: MAIL_FROM
+        sync: false          # Adres email nadawcy (np. tomasz.uscinski@profitia.pl)
+      - key: MSAL_TOKEN_CACHE_B64
+        sync: false          # base64(cat .token_cache.json) — token MSAL dla Graph API
+      - key: NOTIFICATION_EMAIL
+        value: "tomasz.uscinski@profitia.pl"  # Odbiorca emaili approwalowych
+      - key: APOLLO_CAMPAIGN
+        value: "spendguru_market_news"
     healthCheckPath: /health

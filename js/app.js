@@ -1117,6 +1117,7 @@ async function handleRunApollo(e) {
     email:        contact.email,
     tier:         TIER_VALUES[tier],
     job_title:    contact.job_title ?? '',
+    context:      article.context ?? '',
   };
 
   let result = { ok: false, message: 'Błąd połączenia z API' };
