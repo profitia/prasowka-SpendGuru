@@ -40,7 +40,7 @@ _src = Path(__file__).parent.parent
 if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 
@@ -654,7 +654,7 @@ async def save_status(body: StatusRequest) -> dict:
 
 
 @app.post("/api/apollo/run-auto")
-async def run_apollo_auto(body: RunAutoRequest) -> dict:
+async def run_apollo_auto(body: RunAutoRequest, background_tasks: BackgroundTasks) -> dict:
     """
     Uruchamia kampanię Apollo dla wybranego artykułu.
 
@@ -873,61 +873,79 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
 
     _save_history("sent")
 
-    # Step 2: Generate AI Steps 1-3
+    # Step 2 + 3: Generate AI Steps 1-3 and send approval email — in background
+    # (avoids Render 30s request timeout)
     _articles = load_press_articles()
     _art_info = next((a for a in _articles if a.get("source_url") == body.article_url), {})
-    steps: dict | None = None
-    try:
-        from cloud_message_generator import generate_steps
-        log.info("[apollo] Generuję AI Steps 1-3 (GitHub Models)...")
-        steps = await asyncio.to_thread(
-            generate_steps,
-            article_url=body.article_url,
-            full_name=body.full_name,
-            job_title=body.job_title,
-            company_name=body.company_name or _art_info.get("company", ""),
-            tier=body.tier,
-            article_title=_art_info.get("title", "") or body.article_url,
-        )
-        log.info("[apollo] Steps generation: %s", "ok" if steps else "None/failed")
-    except Exception as exc:
-        log.warning("[apollo] Steps generation failed (non-fatal): %s", exc)
-        steps = None
 
-    # Step 3: Approval email
-    log.info(
-        "[apollo] Wysyłam email approwalowy do %s (artykuł: %s)",
-        NOTIFICATION_EMAIL,
-        _art_info.get("title", body.article_url)[:80],
+    _approval_kwargs = dict(
+        article_url=body.article_url,
+        full_name=body.full_name,
+        job_title=body.job_title,
+        company_name=body.company_name or _art_info.get("company", ""),
+        tier=body.tier,
+        article_title=_art_info.get("title", "") or body.article_url,
+        contact_id=result.get("contact_id", ""),
+        sequence_id=result.get("sequence_id", ""),
+        list_id=result.get("list_id", ""),
+        list_added=result.get("list_added", False),
+        sequence_added=result.get("details", {}).get("sequence_added", False),
+        contact_email=body.email,
+        campaign_name=APOLLO_CAMPAIGN,
     )
-    try:
-        from news.email_sender import send_approval_email
-        email_sent = await asyncio.to_thread(
-            send_approval_email,
-            article_title=_art_info.get("title", "") or body.article_url,
-            article_url=body.article_url,
-            company_name=body.company_name or _art_info.get("company", ""),
-            full_name=body.full_name,
-            email=body.email,
-            job_title=body.job_title,
-            tier=body.tier,
-            campaign_name=APOLLO_CAMPAIGN,
-            contact_id=result.get("contact_id", ""),
-            sequence_id=result.get("sequence_id", ""),
-            list_id=result.get("list_id", ""),
-            list_added=result.get("list_added", False),
-            sequence_added=result.get("details", {}).get("sequence_added", False),
-            steps=steps,
-        )
-        log.info("[apollo] Email approwalowy: %s", "wysłany ✔" if email_sent else "NIEUDANY ✘")
-    except Exception as exc:
-        log.warning("[apollo] Email approwalowy exception: %s", exc)
-        email_sent = False
+
+    def _bg_steps_and_email(**kwargs: object) -> None:
+        _article_url = kwargs["article_url"]
+        _full_name = kwargs["full_name"]
+        _job_title = kwargs["job_title"]
+        _company_name = kwargs["company_name"]
+        _tier = kwargs["tier"]
+        _article_title = kwargs["article_title"]
+
+        # Generate AI steps
+        steps: dict | None = None
+        try:
+            from cloud_message_generator import generate_steps
+            log.info("[apollo/bg] Generuję AI Steps 1-3...")
+            steps = generate_steps(
+                article_url=_article_url,
+                full_name=_full_name,
+                job_title=_job_title,
+                company_name=_company_name,
+                tier=_tier,
+                article_title=_article_title,
+            )
+            log.info("[apollo/bg] Steps generation: %s", "ok" if steps else "None/failed")
+        except Exception as exc:
+            log.warning("[apollo/bg] Steps generation failed: %s", exc)
+
+        # Send approval email
+        try:
+            from news.email_sender import send_approval_email
+            email_sent = send_approval_email(
+                article_title=_article_title,
+                article_url=_article_url,
+                company_name=_company_name,
+                full_name=_full_name,
+                email=kwargs["contact_email"],
+                job_title=_job_title,
+                tier=_tier,
+                campaign_name=kwargs["campaign_name"],
+                contact_id=kwargs["contact_id"],
+                sequence_id=kwargs["sequence_id"],
+                list_id=kwargs["list_id"],
+                list_added=kwargs["list_added"],
+                sequence_added=kwargs["sequence_added"],
+                steps=steps,
+            )
+            log.info("[apollo/bg] Email approwalowy: %s", "wysłany ✔" if email_sent else "NIEUDANY ✘")
+        except Exception as exc:
+            log.warning("[apollo/bg] Email approwalowy exception: %s", exc)
+
+    background_tasks.add_task(_bg_steps_and_email, **_approval_kwargs)
+    log.info("[apollo] Steps+email scheduled as background task")
 
     msg = result.get("message", "Kampania Apollo uruchomiona ✔")
-    if not email_sent:
-        msg += " [UWAGA: email powiadomienie nie wysłane — sprawdź MSAL_TOKEN_CACHE_B64]"
-
     return {
         "ok": True,
         "message": msg,

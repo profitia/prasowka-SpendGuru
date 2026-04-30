@@ -147,6 +147,7 @@ def _call_llm(prompt: str, system: str) -> dict | None:
             response_format={"type": "json_object"},
             temperature=0.6,
             max_completion_tokens=3000,
+            timeout=45,
         )
         raw = resp.choices[0].message.content or "{}"
         return json.loads(raw)
