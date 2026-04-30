@@ -257,3 +257,55 @@ def list_sequences() -> list[dict]:
     data = _get("emailer_campaigns", {"per_page": 50})
     campaigns = data.get("emailer_campaigns", [])
     return [{"id": c["id"], "name": c.get("name", "")} for c in campaigns]
+
+
+# ---------------------------------------------------------------------------
+# List (label) operations
+# ---------------------------------------------------------------------------
+
+def add_contact_to_list(contact_id: str, list_id: str) -> tuple[bool, str]:
+    """
+    Dodaje kontakt do listy Apollo (label).
+
+    Endpoint: POST /api/v1/labels/{list_id}/add_contact_ids
+    Payload:  { "contact_ids": ["<contact_id>"] }
+
+    Returns:
+        (True, "") jeśli sukces
+        (False, diagnostic_message) jeśli błąd
+    """
+    url = f"{APOLLO_BASE_URL}/labels/{list_id}/add_contact_ids"
+    payload = {"contact_ids": [contact_id]}
+
+    log.info(
+        "[LIST ADD] url=%s | list_id=%s | contact_id=%s",
+        url, list_id, contact_id,
+    )
+
+    try:
+        resp = requests.post(url, json=payload, headers=_headers(), timeout=30)
+        status_code = resp.status_code
+        try:
+            resp_body = resp.json()
+            resp_body_str = str(resp_body)[:400]
+        except Exception:
+            resp_body = None
+            resp_body_str = resp.text[:400]
+
+        log.info(
+            "[LIST ADD] HTTP %d | list_id=%s contact_id=%s | response: %s",
+            status_code, list_id, contact_id, resp_body_str,
+        )
+
+        if not resp.ok:
+            diag = f"HTTP {status_code} | {resp_body_str}"
+            log.error("[LIST ADD] FAILED: contact_id=%s list_id=%s | %s", contact_id, list_id, diag)
+            return False, diag
+
+        log.info("[LIST ADD] OK: contact_id=%s list_id=%s", contact_id, list_id)
+        return True, ""
+
+    except requests.RequestException as exc:
+        diag = f"Request error: {exc}"
+        log.error("[LIST ADD] exception: contact_id=%s list_id=%s | %s", contact_id, list_id, diag)
+        return False, diag

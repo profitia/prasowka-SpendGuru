@@ -7,6 +7,7 @@
 #        DATABASE_URL   — Neon Postgres connection string
 #        APOLLO_API_KEY — klucz API Apollo.io
 #        APOLLO_SEQUENCE_ID — ID sekwencji do której dodawać kontakty (cloud runner)
+#        APOLLO_LIST_ID     — ID listy Apollo (domyślnie 69e898605270c8000d8137d3)
 #   4. Dla emaili approwalowych (cloud runner):
 #        AZURE_CLIENT_ID       — Azure App Client ID
 #        AZURE_TENANT_ID       — Azure Tenant ID
@@ -33,6 +34,8 @@ services:
         sync: false          # Apollo.io API key — ustaw ręcznie w Render Dashboard
       - key: APOLLO_SEQUENCE_ID
         sync: false          # ID sekwencji Apollo (cloud runner) — ustaw w Render Dashboard
+      - key: APOLLO_LIST_ID
+        value: "69e898605270c8000d8137d3"  # Lista Apollo "PL Tier 1 do market_news VSC"
       - key: APOLLO_SENDER_EMAIL_ACCOUNT_ID
         sync: false          # ID skrzynki nadawczej Apollo — wymagany
       - key: CORS_ORIGINS

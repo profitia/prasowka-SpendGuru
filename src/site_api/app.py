@@ -893,6 +893,11 @@ async def run_apollo_auto(body: RunAutoRequest) -> dict:
             job_title=body.job_title,
             tier=body.tier,
             campaign_name=APOLLO_CAMPAIGN,
+            contact_id=result.get("contact_id", ""),
+            sequence_id=result.get("sequence_id", ""),
+            list_id=result.get("list_id", ""),
+            list_added=result.get("list_added", False),
+            sequence_added=result.get("details", {}).get("sequence_added", False),
         )
         log.info("[apollo] Email approwalowy: %s", "wysłany ✔" if email_sent else "NIEUDANY ✘")
     except Exception as exc:

@@ -57,9 +57,10 @@ def run_auto(
         }
 
     sequence_id_raw = os.environ.get("APOLLO_SEQUENCE_ID", "").strip()
+    list_id = os.environ.get("APOLLO_LIST_ID", "69e898605270c8000d8137d3").strip()
 
     # Import tutaj (nie przy starcie modułu) — obsługuje ENV brak klucza
-    from .client import find_or_create_contact, add_contact_to_sequence, normalize_sequence_id
+    from .client import find_or_create_contact, add_contact_to_sequence, add_contact_to_list, normalize_sequence_id
 
     # Normalizacja: wyciągnij samo ID jeśli ENV zawiera pełny URL Apollo
     sequence_id = normalize_sequence_id(sequence_id_raw) if sequence_id_raw else ""
@@ -89,6 +90,19 @@ def run_auto(
             "details": {},
         }
 
+    # --- Krok 1b: Dodaj do listy Apollo ---
+    list_added = False
+    list_diag = ""
+    if list_id:
+        log.info("[apollo] Dodaję kontakt do listy: %s (contact_id=%s)", list_id, contact_id)
+        list_added, list_diag = add_contact_to_list(contact_id, list_id)
+        if list_added:
+            log.info("[apollo] Dodano do listy OK: list_id=%s contact_id=%s", list_id, contact_id)
+        else:
+            log.warning("[apollo] Nie udało się dodać do listy %s: %s", list_id, list_diag)
+    else:
+        log.warning("[apollo] APOLLO_LIST_ID nie ustawiony — pomijam dodanie do listy")
+
     # --- Krok 2: Dodaj do sekwencji (jeśli skonfigurowana) ---
     if not sequence_id:
         log.warning(
@@ -100,30 +114,36 @@ def run_auto(
             "ok": True,
             "contact_id": contact_id,
             "sequence_id": None,
+            "list_id": list_id or None,
+            "list_added": list_added,
             "message": (
                 f"Kontakt zaimportowany do Apollo (id: {contact_id}), "
                 "ale APOLLO_SEQUENCE_ID nie jest ustawiony — sekwencja nie uruchomiona. "
                 "Ustaw APOLLO_SEQUENCE_ID w Render Dashboard."
             ),
-            "details": {"email": email, "sequence_added": False},
+            "details": {"email": email, "sequence_added": False, "list_added": list_added},
         }
 
     added, diag = add_contact_to_sequence(contact_id, sequence_id)
 
     if added:
         log.info(
-            "run_auto sukces: email=%s contact_id=%s sequence_id=%s",
-            email, contact_id, sequence_id,
+            "run_auto sukces: email=%s contact_id=%s sequence_id=%s list_added=%s",
+            email, contact_id, sequence_id, list_added,
         )
         return {
             "ok": True,
             "contact_id": contact_id,
             "sequence_id": sequence_id,
+            "list_id": list_id or None,
+            "list_added": list_added,
             "message": f"Kontakt dodany do sekwencji Apollo (contact_id: {contact_id})",
             "details": {
                 "email": email,
                 "sequence_added": True,
                 "sequence_id": sequence_id,
+                "list_added": list_added,
+                "list_id": list_id or None,
             },
         }
     else:
@@ -135,6 +155,8 @@ def run_auto(
             "ok": False,
             "contact_id": contact_id,
             "sequence_id": sequence_id,
+            "list_id": list_id or None,
+            "list_added": list_added,
             "message": (
                 f"Kontakt utworzony w Apollo (id: {contact_id}), "
                 f"ale sequence add failed [{diag}]. "
@@ -146,5 +168,7 @@ def run_auto(
                 "sequence_add_error": diag,
                 "contact_id": contact_id,
                 "sequence_id": sequence_id,
+                "list_added": list_added,
+                "list_id": list_id or None,
             },
         }

@@ -165,11 +165,17 @@ def send_approval_email(
     job_title: str,
     tier: str,
     campaign_name: str = "spendguru_market_news",
+    contact_id: str = "",
+    sequence_id: str = "",
+    list_id: str = "",
+    list_added: bool = False,
+    sequence_added: bool = False,
 ) -> bool:
     """
     Wysyła mail powiadomienie approvalowe do NOTIFICATION_EMAIL.
 
     Subject: "Kampania {campaign_name} czeka na zatwierdzenie"
+    Format: Pełny styled HTML — green banner, tabele artykuł/kontakt, linki Apollo.
     """
     to_email = NOTIFICATION_EMAIL
     if not to_email:
@@ -179,43 +185,132 @@ def send_approval_email(
     subject = f"Kampania {campaign_name} czeka na zatwierdzenie"
     tier_label = "Tier 1 (C-Level)" if "tier_1" in tier else "Tier 2 (Procurement/Management)"
 
+    # Apollo links
+    _seq_id = sequence_id or "69ea5642f22658000d2fdf13"
+    _list_id = list_id or "69e898605270c8000d8137d3"
+    apollo_seq_url = f"https://app.apollo.io/#/sequences/{_seq_id}"
+    apollo_list_url = f"https://app.apollo.io/#/lists/{_list_id}"
+    apollo_contact_url = f"https://app.apollo.io/#/people?contact_id={contact_id}" if contact_id else ""
+
+    list_status = "&#10003; Dodano do listy" if list_added else "&#9888; Nie dodano do listy"
+    list_color = "#198754" if list_added else "#cc6600"
+    seq_status = "&#10003; Dodano do sekwencji" if sequence_added else "&#9888; Nie dodano do sekwencji"
+    seq_color = "#198754" if sequence_added else "#cc6600"
+
     body_html = f"""<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
-<body style="font-family:Arial,sans-serif;font-size:14px;color:#333;max-width:620px;margin:0 auto;padding:20px;">
-  <div style="background:#f0f4f8;border-left:4px solid #0078d4;padding:16px 20px;margin-bottom:24px;border-radius:2px;">
-    <h2 style="margin:0 0 6px 0;color:#0078d4;font-size:18px;">Kampania czeka na zatwierdzenie</h2>
-    <p style="margin:0;color:#666;font-size:12px;">SpendGuru Market News &mdash; {campaign_name}</p>
+<body style="font-family:Arial,sans-serif;font-size:14px;color:#212529;max-width:640px;margin:0 auto;padding:20px;background:#f8f9fa;">
+
+  <div style="background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
+
+    <!-- BANNER -->
+    <div style="background:#198754;padding:18px 24px;">
+      <p style="margin:0;color:#fff;font-size:17px;font-weight:bold;letter-spacing:.3px;">
+        &#x1F7E2; KONTAKT DODANY DO APOLLO &mdash; CZEKA NA REVIEW
+      </p>
+      <p style="margin:6px 0 0;color:rgba(255,255,255,.8);font-size:12px;">
+        Kampania: {campaign_name} &bull; SpendGuru Market News
+      </p>
+    </div>
+
+    <!-- ARTYKU&#321; I FIRMA -->
+    <div style="padding:0 24px 0;">
+      <table style="width:100%;border-collapse:collapse;margin-top:20px;font-size:13px;">
+        <thead>
+          <tr style="background:#343a40;color:#fff;">
+            <th colspan="2" style="padding:9px 12px;text-align:left;font-size:12px;letter-spacing:.5px;font-weight:600;">
+              ARTYKU&#321; I FIRMA
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:9px 12px;font-weight:600;color:#555;width:30%;background:#f8f9fa;">Artyku&#322;</td>
+            <td style="padding:9px 12px;">
+              <a href="{article_url}" style="color:#0d6efd;text-decoration:none;">{article_title or article_url}</a>
+            </td>
+          </tr>
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:9px 12px;font-weight:600;color:#555;background:#f8f9fa;">Firma</td>
+            <td style="padding:9px 12px;">{company_name or "&mdash;"}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- KONTAKT -->
+    <div style="padding:0 24px 0;">
+      <table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:13px;">
+        <thead>
+          <tr style="background:#343a40;color:#fff;">
+            <th colspan="2" style="padding:9px 12px;text-align:left;font-size:12px;letter-spacing:.5px;font-weight:600;">
+              KONTAKT
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:9px 12px;font-weight:600;color:#555;width:30%;background:#f8f9fa;">Imi&#281; i nazwisko</td>
+            <td style="padding:9px 12px;">{full_name or "&mdash;"}</td>
+          </tr>
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:9px 12px;font-weight:600;color:#555;background:#f8f9fa;">Email</td>
+            <td style="padding:9px 12px;">{email}</td>
+          </tr>
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:9px 12px;font-weight:600;color:#555;background:#f8f9fa;">Stanowisko</td>
+            <td style="padding:9px 12px;">{job_title or "&mdash;"}</td>
+          </tr>
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:9px 12px;font-weight:600;color:#555;background:#f8f9fa;">Tier</td>
+            <td style="padding:9px 12px;">{tier_label}</td>
+          </tr>
+          {'<tr style="border-bottom:1px solid #dee2e6;"><td style="padding:9px 12px;font-weight:600;color:#555;background:#f8f9fa;">Apollo CRM</td><td style="padding:9px 12px;"><a href="' + apollo_contact_url + '" style="color:#0d6efd;text-decoration:none;">Otwórz kontakt w Apollo</a></td></tr>' if apollo_contact_url else ''}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- STATUS APOLLO -->
+    <div style="padding:0 24px 0;">
+      <table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:13px;">
+        <thead>
+          <tr style="background:#343a40;color:#fff;">
+            <th colspan="2" style="padding:9px 12px;text-align:left;font-size:12px;letter-spacing:.5px;font-weight:600;">
+              STATUS APOLLO
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td style="padding:9px 12px;font-weight:600;color:#555;width:30%;background:#f8f9fa;">Lista Apollo</td>
+            <td style="padding:9px 12px;">
+              <span style="color:{list_color};font-weight:600;">{list_status}</span>
+              &nbsp;&bull;&nbsp;
+              <a href="{apollo_list_url}" style="color:#0d6efd;text-decoration:none;font-size:12px;">Otwórz listę &#8599;</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:9px 12px;font-weight:600;color:#555;background:#f8f9fa;">Sekwencja Apollo</td>
+            <td style="padding:9px 12px;">
+              <span style="color:{seq_color};font-weight:600;">{seq_status}</span>
+              &nbsp;&bull;&nbsp;
+              <a href="{apollo_seq_url}" style="color:#0d6efd;text-decoration:none;font-size:12px;">Otwórz sekwencję &#8599;</a>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- FOOTER -->
+    <div style="padding:16px 24px 20px;margin-top:20px;border-top:1px solid #dee2e6;">
+      <p style="margin:0;color:#6c757d;font-size:11px;">
+        Wiadomo&#347;&#263; wygenerowana automatycznie przez Pras&#243;wk&#281; SpendGuru (cloud runner).
+      </p>
+    </div>
+
   </div>
 
-  <table style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:14px;">
-    <tr>
-      <td style="padding:10px 12px;background:#f8f9fa;font-weight:bold;color:#555;width:32%;border-bottom:1px solid #dee2e6;">Artyku&#322;</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #dee2e6;">
-        <a href="{article_url}" style="color:#0078d4;text-decoration:none;">{article_title or article_url}</a>
-      </td>
-    </tr>
-    <tr>
-      <td style="padding:10px 12px;background:#f8f9fa;font-weight:bold;color:#555;border-bottom:1px solid #dee2e6;">Firma</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #dee2e6;">{company_name}</td>
-    </tr>
-    <tr>
-      <td style="padding:10px 12px;background:#f8f9fa;font-weight:bold;color:#555;border-bottom:1px solid #dee2e6;">Kontakt</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #dee2e6;">{full_name} &lt;{email}&gt;</td>
-    </tr>
-    <tr>
-      <td style="padding:10px 12px;background:#f8f9fa;font-weight:bold;color:#555;border-bottom:1px solid #dee2e6;">Stanowisko</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #dee2e6;">{job_title or "&mdash;"}</td>
-    </tr>
-    <tr>
-      <td style="padding:10px 12px;background:#f8f9fa;font-weight:bold;color:#555;">Tier</td>
-      <td style="padding:10px 12px;">{tier_label}</td>
-    </tr>
-  </table>
-
-  <p style="color:#888;font-size:12px;margin-top:20px;padding-top:14px;border-top:1px solid #dee2e6;">
-    Wygenerowano automatycznie przez Pras&#243;wk&#281; SpendGuru (cloud runner).
-  </p>
 </body>
 </html>"""
 
