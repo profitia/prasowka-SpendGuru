@@ -86,46 +86,69 @@ def find_or_create_contact(
     job_title: str = "",
 ) -> str | None:
     """
-    Szuka kontaktu w Apollo po emailu. Jeśli nie istnieje, tworzy nowy.
+    Importuje kontakt do konta Apollo i zwraca jego ID.
+
+    people/match używany tylko do wzbogacenia danych — zwraca ID z globalnej bazy
+    Apollo (nie z konta użytkownika), więc nie może być używany do operacji
+    list/sequence. Zawsze importujemy przez POST /contacts.
     Zwraca contact_id (str) lub None w przypadku błędu.
     """
-    # Spróbuj people/match (email reveal / match)
+    # Krok 1: people/match — tylko do wzbogacenia danych (imię/firma/stanowisko)
+    enriched_name = full_name
+    enriched_company = company_name
+    enriched_title = job_title
     try:
         data = _post("people/match", {
             "email": email,
             "reveal_personal_emails": False,
             "reveal_phone_number": False,
         })
-        person = data.get("person")
-        if person:
-            contact_id = person.get("id")
-            if contact_id:
-                log.info("Znaleziono istniejący kontakt w Apollo: %s (id=%s)", email, contact_id)
-                return contact_id
+        person = data.get("person") or {}
+        if not enriched_name and person.get("name"):
+            enriched_name = person["name"]
+        if not enriched_company and person.get("organization", {}).get("name"):
+            enriched_company = person["organization"]["name"]
+        if not enriched_title and person.get("title"):
+            enriched_title = person["title"]
     except requests.HTTPError as exc:
         log.warning("people/match nie udał się dla %s: %s", email, exc)
 
-    # Brak match — utwórz kontakt
-    first_name, _, last_name = full_name.partition(" ") if full_name else ("", "", "")
+    # Krok 2: zawsze importuj/utwórz kontakt w koncie przez POST /contacts
+    # Jeśli kontakt już istnieje w koncie, Apollo zwróci jego ID z konta
+    first_name, _, last_name = enriched_name.partition(" ") if enriched_name else ("", "", "")
     payload: dict[str, Any] = {
         "email": email,
         "first_name": first_name.strip() or None,
         "last_name": last_name.strip() or None,
-        "organization_name": company_name or None,
-        "title": job_title or None,
+        "organization_name": enriched_company or None,
+        "title": enriched_title or None,
     }
-    # Usuń puste wartości
     payload = {k: v for k, v in payload.items() if v is not None}
 
     try:
         data = _post("contacts", payload)
         contact = data.get("contact", {})
         contact_id = contact.get("id")
-        log.info("Utworzono nowy kontakt w Apollo: %s (id=%s)", email, contact_id)
-        return contact_id
+        if contact_id:
+            log.info("Kontakt zaimportowany do konta Apollo: %s (id=%s)", email, contact_id)
+            return contact_id
+        log.warning("POST contacts nie zwróciło ID dla %s — próba wyszukania", email)
     except requests.HTTPError as exc:
-        log.error("Nie udało się utworzyć kontaktu w Apollo dla %s: %s", email, exc)
-        return None
+        log.warning("POST contacts nie udał się dla %s: %s — próba wyszukania istniejącego", email, exc)
+
+    # Krok 3: fallback — szukaj istniejącego kontaktu w koncie
+    try:
+        data = _post("contacts/search", {"q_keywords": email, "per_page": 1})
+        contacts = data.get("contacts", [])
+        if contacts:
+            contact_id = contacts[0].get("id")
+            log.info("Znaleziono kontakt w koncie Apollo (search): %s (id=%s)", email, contact_id)
+            return contact_id
+    except requests.HTTPError as exc:
+        log.error("contacts/search nie udał się dla %s: %s", email, exc)
+
+    log.error("Nie udało się zaimportować kontaktu do konta Apollo dla %s", email)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +259,18 @@ def add_contact_to_sequence(contact_id: str, sequence_id: str) -> tuple[bool, st
                 contact_id, sequence_id, diag,
             )
             return False, diag
+
+        # Sprawdź czy kontakt nie został pominięty (HTTP 200 ale skipped)
+        if resp_body and isinstance(resp_body, dict):
+            skipped = resp_body.get("skipped_contact_ids", {})
+            if contact_id in skipped:
+                reason = skipped[contact_id]
+                diag = f"contact skipped by Apollo: {reason}"
+                log.error(
+                    "[SEQUENCE ADD] SKIPPED: contact_id=%s sequence_id=%s | reason=%s",
+                    contact_id, sequence_id, reason,
+                )
+                return False, diag
 
         log.info(
             "[SEQUENCE ADD] OK: contact_id=%s sequence_id=%s",
