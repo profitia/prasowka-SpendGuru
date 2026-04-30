@@ -55,4 +55,7 @@ services:
         value: "tomasz.uscinski@profitia.pl"  # Odbiorca emaili approwalowych
       - key: APOLLO_CAMPAIGN
         value: "spendguru_market_news"
+      # --- AI Steps 1-3 generation (cloud_message_generator) ---
+      - key: GITHUB_TOKEN
+        sync: false          # GitHub fine-grained PAT z permission "models" — dla AI Steps 1-3
     healthCheckPath: /health

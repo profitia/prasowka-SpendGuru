@@ -170,12 +170,15 @@ def send_approval_email(
     list_id: str = "",
     list_added: bool = False,
     sequence_added: bool = False,
+    steps: dict | None = None,
 ) -> bool:
     """
     Wysyła mail powiadomienie approvalowe do NOTIFICATION_EMAIL.
 
     Subject: "Kampania {campaign_name} czeka na zatwierdzenie"
-    Format: Pełny styled HTML — green banner, tabele artykuł/kontakt, linki Apollo.
+    Format: Pełny styled HTML — green banner, tabele artykuł/kontakt/status, opcjonalne Steps 1-3.
+
+    steps: dict z email_1, follow_up_1, follow_up_2 (każdy z subject + body)
     """
     to_email = NOTIFICATION_EMAIL
     if not to_email:
@@ -197,10 +200,52 @@ def send_approval_email(
     seq_status = "&#10003; Dodano do sekwencji" if sequence_added else "&#9888; Nie dodano do sekwencji"
     seq_color = "#198754" if sequence_added else "#cc6600"
 
+    # Steps 1-3 HTML block
+    steps_html = ""
+    if steps:
+        step_defs = [
+            ("Step 1", "email_1", "#0062cc"),
+            ("Step 2", "follow_up_1", "#6f42c1"),
+            ("Step 3", "follow_up_2", "#20c997"),
+        ]
+        for label, key, color in step_defs:
+            step_data = steps.get(key, {})
+            subj = step_data.get("subject", "")
+            body = step_data.get("body", "")
+            if not subj and not body:
+                continue
+            import html as _html
+            body_html_lines = "".join(
+                f"<p style='margin:4px 0'>{_html.escape(line)}</p>" if line.strip() else "<br>"
+                for line in body.split("\n")
+            )
+            steps_html += f"""
+        <div style="margin:12px 0;padding:12px 16px;border-left:4px solid {color};background:#f8f9fa;border-radius:2px;">
+          <div style="font-weight:bold;color:{color};font-size:13px;margin-bottom:6px;">{label}</div>
+          <div style="margin-bottom:4px;font-size:13px;"><b>Temat:</b> {_html.escape(subj)}</div>
+          <div style="margin-top:8px;padding:10px;background:#fff;border:1px solid #dee2e6;border-radius:4px;font-size:13px;line-height:1.6;">{body_html_lines}</div>
+        </div>"""
+
+        if steps_html:
+            steps_html = f"""
+    <!-- SEKWENCJA MAILOWA -->
+    <div style="padding:0 24px 20px;">
+      <table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:13px;">
+        <thead>
+          <tr style="background:#343a40;color:#fff;">
+            <th style="padding:9px 12px;text-align:left;font-size:12px;letter-spacing:.5px;font-weight:600;">
+              SEKWENCJA MAILOWA (Step 1&ndash;3)
+            </th>
+          </tr>
+        </thead>
+      </table>
+      {steps_html}
+    </div>"""
+
     body_html = f"""<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"></head>
-<body style="font-family:Arial,sans-serif;font-size:14px;color:#212529;max-width:640px;margin:0 auto;padding:20px;background:#f8f9fa;">
+<body style="font-family:Arial,sans-serif;font-size:14px;color:#212529;max-width:680px;margin:0 auto;padding:20px;background:#f8f9fa;">
 
   <div style="background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
 
@@ -287,7 +332,7 @@ def send_approval_email(
             <td style="padding:9px 12px;">
               <span style="color:{list_color};font-weight:600;">{list_status}</span>
               &nbsp;&bull;&nbsp;
-              <a href="{apollo_list_url}" style="color:#0d6efd;text-decoration:none;font-size:12px;">Otwórz listę &#8599;</a>
+              <a href="{apollo_list_url}" style="color:#0d6efd;text-decoration:none;font-size:12px;">Otwórz list&#281; &#8599;</a>
             </td>
           </tr>
           <tr>
@@ -295,15 +340,17 @@ def send_approval_email(
             <td style="padding:9px 12px;">
               <span style="color:{seq_color};font-weight:600;">{seq_status}</span>
               &nbsp;&bull;&nbsp;
-              <a href="{apollo_seq_url}" style="color:#0d6efd;text-decoration:none;font-size:12px;">Otwórz sekwencję &#8599;</a>
+              <a href="{apollo_seq_url}" style="color:#0d6efd;text-decoration:none;font-size:12px;">Otwórz sekwencj&#281; &#8599;</a>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
 
+    {steps_html}
+
     <!-- FOOTER -->
-    <div style="padding:16px 24px 20px;margin-top:20px;border-top:1px solid #dee2e6;">
+    <div style="padding:16px 24px 20px;margin-top:16px;border-top:1px solid #dee2e6;">
       <p style="margin:0;color:#6c757d;font-size:11px;">
         Wiadomo&#347;&#263; wygenerowana automatycznie przez Pras&#243;wk&#281; SpendGuru (cloud runner).
       </p>
@@ -317,10 +364,12 @@ def send_approval_email(
     try:
         result = send_email(to_email, subject, body_html)
         if result:
-            log.info("[approval_email] Wysłano do %s (%s — %s)", to_email, company_name, full_name)
+            log.info("[approval_email] Wysłano do %s (%s — %s) steps=%s",
+                     to_email, company_name, full_name, "tak" if steps else "brak")
         else:
             log.warning("[approval_email] send_email zwrócił False")
         return result
     except Exception as exc:
         log.warning("[approval_email] Błąd wysyłki: %s", exc)
         return False
+
