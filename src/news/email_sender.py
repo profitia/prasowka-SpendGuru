@@ -252,7 +252,7 @@ def send_approval_email(
     <!-- BANNER -->
     <div style="background:#198754;padding:18px 24px;">
       <p style="margin:0;color:#fff;font-size:17px;font-weight:bold;letter-spacing:.3px;">
-        &#x1F7E2; KONTAKT DODANY DO APOLLO &mdash; CZEKA NA REVIEW
+        &#x1F7E2; FLOW GOTOWY DO REVIEW I URUCHOMIENIA W APOLLO
       </p>
       <p style="margin:6px 0 0;color:rgba(255,255,255,.8);font-size:12px;">
         Kampania: {campaign_name} &bull; SpendGuru Market News
