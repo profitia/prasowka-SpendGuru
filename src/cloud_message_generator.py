@@ -124,36 +124,41 @@ def _call_llm(prompt: str, system: str) -> dict | None:
         log.warning("[cloud_msg] openai package not installed")
         return None
 
-    if github_token:
-        client = _openai.OpenAI(
-            base_url=_GITHUB_MODELS_BASE,
-            api_key=github_token,
-        )
-        log.info("[cloud_msg] Using GitHub Models: %s", model)
-    elif openai_key:
-        client = _openai.OpenAI(api_key=openai_key)
-        log.info("[cloud_msg] Using OpenAI: %s", model)
-    else:
-        log.warning("[cloud_msg] No LLM credentials (GITHUB_TOKEN / OPENAI_API_KEY)")
-        return None
+    def _try_call(client: object, label: str) -> dict | None:
+        try:
+            resp = client.chat.completions.create(  # type: ignore[union-attr]
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.6,
+                max_completion_tokens=3000,
+                timeout=45,
+            )
+            raw = resp.choices[0].message.content or "{}"
+            return json.loads(raw)
+        except Exception as exc:
+            log.warning("[cloud_msg] LLM call failed (%s): %s", label, exc)
+            return None
 
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.6,
-            max_completion_tokens=3000,
-            timeout=45,
-        )
-        raw = resp.choices[0].message.content or "{}"
-        return json.loads(raw)
-    except Exception as exc:
-        log.warning("[cloud_msg] LLM call failed: %s", exc)
-        return None
+    # Try GitHub Models first, fall back to OpenAI on any error (incl. 401)
+    if github_token:
+        log.info("[cloud_msg] Using GitHub Models: %s", model)
+        client_gh = _openai.OpenAI(base_url=_GITHUB_MODELS_BASE, api_key=github_token)
+        result = _try_call(client_gh, "github_models")
+        if result is not None:
+            return result
+        log.info("[cloud_msg] GitHub Models failed — trying OpenAI fallback")
+
+    if openai_key:
+        log.info("[cloud_msg] Using OpenAI fallback: %s", model)
+        client_oai = _openai.OpenAI(api_key=openai_key)
+        return _try_call(client_oai, "openai")
+
+    log.warning("[cloud_msg] No LLM credentials (GITHUB_TOKEN / OPENAI_API_KEY)")
+    return None
 
 
 # ---------------------------------------------------------------------------
