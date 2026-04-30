@@ -79,6 +79,43 @@ def _get(endpoint: str, params: dict | None = None) -> dict:
 # Contact operations
 # ---------------------------------------------------------------------------
 
+def update_contact_custom_fields(contact_id: str, fields: dict[str, str]) -> bool:
+    """
+    Zapisuje custom fields na kontakcie Apollo (PATCH /contacts/{id}).
+
+    fields: słownik {nazwa_pola: wartość}, np.:
+      {"sg_market_news_email_step_1_subject": "...", "sg_market_news_email_step_1_body": "..."}
+
+    Apollo przyjmuje typed_custom_fields jako listę:
+      [{"key": "slug_name", "value": "..."}]
+
+    Zwraca True jeśli sukces, False jeśli błąd.
+    """
+    if not contact_id or not fields:
+        return False
+
+    typed_custom_fields = [{"key": k, "value": v} for k, v in fields.items() if v]
+    if not typed_custom_fields:
+        return False
+
+    url = f"{APOLLO_BASE_URL}/contacts/{contact_id}"
+    payload = {"typed_custom_fields": typed_custom_fields}
+    try:
+        resp = requests.patch(url, json=payload, headers=_headers(), timeout=30)
+        try:
+            resp_body_str = str(resp.json())[:400]
+        except Exception:
+            resp_body_str = resp.text[:400]
+        if resp.ok:
+            log.info("[CUSTOM FIELDS] OK: contact_id=%s fields=%s", contact_id, list(fields.keys()))
+            return True
+        log.error("[CUSTOM FIELDS] FAILED: contact_id=%s HTTP %d | %s", contact_id, resp.status_code, resp_body_str)
+        return False
+    except requests.RequestException as exc:
+        log.error("[CUSTOM FIELDS] exception: contact_id=%s | %s", contact_id, exc)
+        return False
+
+
 def find_or_create_contact(
     email: str,
     full_name: str = "",

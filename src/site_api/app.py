@@ -919,6 +919,32 @@ async def run_apollo_auto(body: RunAutoRequest, background_tasks: BackgroundTask
         except Exception as exc:
             log.warning("[apollo/bg] Steps generation failed: %s", exc)
 
+        # Save AI Steps as Apollo contact custom fields (used by sequence templates)
+        if steps and kwargs.get("contact_id"):
+            try:
+                from apollo_runner.client import update_contact_custom_fields
+                _contact_id = str(kwargs["contact_id"])
+                step1 = steps.get("email_1", {})
+                step2 = steps.get("follow_up_1", {})
+                step3 = steps.get("follow_up_2", {})
+                custom_fields: dict[str, str] = {}
+                if step1.get("subject"):
+                    custom_fields["sg_market_news_email_step_1_subject"] = step1["subject"]
+                if step1.get("body"):
+                    custom_fields["sg_market_news_email_step_1_body"] = step1["body"]
+                if step2.get("subject"):
+                    custom_fields["sg_market_news_email_step_2_subject"] = step2["subject"]
+                if step2.get("body"):
+                    custom_fields["sg_market_news_email_step_2_body"] = step2["body"]
+                if step3.get("subject"):
+                    custom_fields["sg_market_news_email_step_3_subject"] = step3["subject"]
+                if step3.get("body"):
+                    custom_fields["sg_market_news_email_step_3_body"] = step3["body"]
+                ok = update_contact_custom_fields(_contact_id, custom_fields)
+                log.info("[apollo/bg] Custom fields update: %s", "ok ✔" if ok else "FAILED ✘")
+            except Exception as exc:
+                log.warning("[apollo/bg] Custom fields update exception: %s", exc)
+
         # Send approval email
         try:
             from news.email_sender import send_approval_email
