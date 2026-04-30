@@ -79,6 +79,25 @@ def _get(endpoint: str, params: dict | None = None) -> dict:
 # Contact operations
 # ---------------------------------------------------------------------------
 
+_custom_field_id_cache: dict[str, str] | None = None
+
+
+def _get_custom_field_ids() -> dict[str, str]:
+    """Zwraca dict {nazwa_pola: field_id} z Apollo (cached)."""
+    global _custom_field_id_cache
+    if _custom_field_id_cache is not None:
+        return _custom_field_id_cache
+    try:
+        data = _get("typed_custom_fields")
+        fields = data.get("typed_custom_fields", [])
+        _custom_field_id_cache = {f["name"]: f["id"] for f in fields if "name" in f and "id" in f}
+        log.info("[CUSTOM FIELDS] Załadowano %d definicji z Apollo", len(_custom_field_id_cache))
+    except Exception as exc:
+        log.warning("[CUSTOM FIELDS] Nie udało się pobrać definicji pól: %s", exc)
+        _custom_field_id_cache = {}
+    return _custom_field_id_cache
+
+
 def update_contact_custom_fields(contact_id: str, fields: dict[str, str]) -> bool:
     """
     Zapisuje custom fields na kontakcie Apollo (PATCH /contacts/{id}).
@@ -86,16 +105,31 @@ def update_contact_custom_fields(contact_id: str, fields: dict[str, str]) -> boo
     fields: słownik {nazwa_pola: wartość}, np.:
       {"sg_market_news_email_step_1_subject": "...", "sg_market_news_email_step_1_body": "..."}
 
-    Apollo przyjmuje typed_custom_fields jako listę:
-      [{"key": "slug_name", "value": "..."}]
+    Apollo wymaga typed_custom_fields jako {field_id: value}.
+    IDs pobierane są dynamicznie z GET /typed_custom_fields (cached).
 
     Zwraca True jeśli sukces, False jeśli błąd.
     """
     if not contact_id or not fields:
         return False
 
-    typed_custom_fields = {k: v for k, v in fields.items() if v}
+    field_ids = _get_custom_field_ids()
+    typed_custom_fields = {}
+    missing = []
+    for name, value in fields.items():
+        if not value:
+            continue
+        fid = field_ids.get(name)
+        if fid:
+            typed_custom_fields[fid] = value
+        else:
+            missing.append(name)
+
+    if missing:
+        log.warning("[CUSTOM FIELDS] Brak definicji dla pól: %s — zostaną pominięte", missing)
+
     if not typed_custom_fields:
+        log.error("[CUSTOM FIELDS] Brak pól do zapisu (wszystkie niezdefiniowane lub puste)")
         return False
 
     url = f"{APOLLO_BASE_URL}/contacts/{contact_id}"
@@ -103,11 +137,15 @@ def update_contact_custom_fields(contact_id: str, fields: dict[str, str]) -> boo
     try:
         resp = requests.patch(url, json=payload, headers=_headers(), timeout=30)
         try:
-            resp_body_str = str(resp.json())[:400]
+            resp_json = resp.json()
+            result_fields = resp_json.get("contact", {}).get("typed_custom_fields", {})
+            resp_body_str = str(resp_json)[:400]
         except Exception:
+            result_fields = {}
             resp_body_str = resp.text[:400]
         if resp.ok:
-            log.info("[CUSTOM FIELDS] OK: contact_id=%s fields=%s", contact_id, list(fields.keys()))
+            written = len(result_fields)
+            log.info("[CUSTOM FIELDS] OK: contact_id=%s pola=%s zapisane=%d", contact_id, list(fields.keys()), written)
             return True
         log.error("[CUSTOM FIELDS] FAILED: contact_id=%s HTTP %d | %s", contact_id, resp.status_code, resp_body_str)
         return False
