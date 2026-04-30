@@ -94,7 +94,7 @@ def update_contact_custom_fields(contact_id: str, fields: dict[str, str]) -> boo
     if not contact_id or not fields:
         return False
 
-    typed_custom_fields = [{"key": k, "value": v} for k, v in fields.items() if v]
+    typed_custom_fields = {k: v for k, v in fields.items() if v}
     if not typed_custom_fields:
         return False
 
