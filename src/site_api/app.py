@@ -927,7 +927,32 @@ async def run_apollo_auto(body: RunAutoRequest, background_tasks: BackgroundTask
                 step1 = steps.get("email_1", {})
                 step2 = steps.get("follow_up_1", {})
                 step3 = steps.get("follow_up_2", {})
-                custom_fields: dict[str, str] = {}
+                SIGNATURE_HTML = (
+                    '<p style="font-family: Aptos, Calibri, Arial, sans-serif; font-size: 11pt;'
+                    ' color: #000000; line-height: 1.5; margin: 2px 0 2px 0;">Pozdrawiam,</p>'
+                    '<p style="font-family: Aptos, Calibri, Arial, sans-serif; font-size: 11pt;'
+                    ' color: #000000; line-height: 1.5; margin: 0 0 0 0;">'
+                    '<strong>Tomasz Uściński</strong><br>'
+                    'Senior Client Partner | Procurement<br>'
+                    '+48&#8203; 787&#8203; 417&#8203; 293'
+                    '</p>'
+                    '<p style="font-family: Aptos, Calibri, Arial, sans-serif; font-size: 11pt;'
+                    ' color: #000000; line-height: 1.5; margin: 8px 0 0 0;">'
+                    '<strong>PROFITIA Management Consultants Mazurowski i Wspólnicy Spółka Jawna</strong><br>'
+                    'Negotiation Intelligence w Zakupach | Doradztwo procurement'
+                    ' | Certyfikowany Partner CIPS w Polsce | Szkolenia | Analityka zakupowa<br>'
+                    '02-715 Warszawa, Villa Metro, ul. Puławska 145, V p.'
+                    '</p>'
+                    '<p style="font-family: Aptos, Calibri, Arial, sans-serif; font-size: 9pt;'
+                    ' color: #949494; line-height: 1.4; margin: 8px 0 0 0;">'
+                    'Uwaga: Ten e-mail jest poufny i przeznaczony tylko dla adresata (-ów) tej wiadomości.'
+                    ' Jeżeli nie jesteś adresatem niniejszej wiadomości, usuń oryginał wiadomości'
+                    ' wraz z wszelkimi wydrukami (kopiami) i załącznikami.'
+                    '</p>'
+                )
+                custom_fields: dict[str, str] = {
+                    "pl_market_news_signature_tu": SIGNATURE_HTML,
+                }
                 if step1.get("subject"):
                     custom_fields["sg_market_news_email_step_1_subject"] = step1["subject"]
                 if step1.get("body"):
