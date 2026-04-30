@@ -188,7 +188,9 @@ def _build_prompt(
         _resolved = resolve_polish_contact(first_name)
         greeting = _resolved["greeting"]
         vocative = _resolved["first_name_vocative"] or first_name
-    except Exception:
+        log.debug("[cloud_msg] Wołacz: %s → %s | greeting: %s", first_name, vocative, greeting)
+    except Exception as _exc:
+        log.warning("[cloud_msg] Wołacz lookup failed (%s) — fallback dla: %s", _exc, first_name)
         gender_guess = "female" if first_name and first_name[-1].lower() == "a" else "male"
         vocative = first_name
         pan_pani = "Pani" if gender_guess == "female" else "Panie"
@@ -343,6 +345,38 @@ def generate_steps(
     if not result or "email_1" not in result:
         log.warning("[cloud_msg] LLM returned no usable result")
         return None
+
+    # Post-processing: enforce correct greeting in all 3 steps
+    # (safety net — LLM may use wrong vocative form)
+    _greeting = _build_prompt.__globals__.get("_last_greeting")
+    # Re-resolve greeting for enforcement (prompt closure doesn't expose it)
+    try:
+        import sys as _sys2
+        import os as _os2
+        _src_dir2 = _os2.path.dirname(_os2.path.abspath(__file__))
+        if _src_dir2 not in _sys2.path:
+            _sys2.path.insert(0, _src_dir2)
+        from polish_names import resolve_polish_contact as _rpc
+        _fn = full_name.split()[0] if full_name else ""
+        _greeting = _rpc(_fn)["greeting"]
+    except Exception:
+        pass
+
+    if _greeting:
+        import re as _re
+        _GREETING_PATTERN = _re.compile(r'Dzie\u0144 dobry[^,\n]*,')
+        for step_key in ("email_1", "follow_up_1", "follow_up_2"):
+            body = result.get(step_key, {}).get("body", "")
+            if not body:
+                continue
+            stripped = body.strip()
+            if stripped.startswith(_greeting):
+                continue  # already correct
+            m = _GREETING_PATTERN.search(stripped)
+            if m:
+                rest = stripped[m.end():].lstrip()
+                result[step_key]["body"] = _greeting + "\n\n" + rest
+                log.info("[cloud_msg] Enforce greeting in %s: '%s' → '%s'", step_key, m.group(), _greeting)
 
     log.info(
         "[cloud_msg] Steps generated OK: e1_subj=%r fu1_subj=%r fu2_subj=%r",
