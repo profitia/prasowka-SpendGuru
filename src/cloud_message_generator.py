@@ -176,8 +176,23 @@ def _build_prompt(
     tier_perspective = TIER_PERSPECTIVES.get(tier, TIER_PERSPECTIVES["tier_2_procurement_management"])
     calendly = CALENDLY_URLS.get(tier, CALENDLY_URLS["tier_2_procurement_management"])
 
-    # Derive first name for vocative (simplified — no Polish declension dict on Render)
+    # Resolve vocative form of first name using Polish names dictionary
     first_name = full_name.split()[0] if full_name else ""
+    try:
+        import sys as _sys
+        import os as _os
+        _src_dir = _os.path.dirname(_os.path.abspath(__file__))
+        if _src_dir not in _sys.path:
+            _sys.path.insert(0, _src_dir)
+        from polish_names import resolve_polish_contact
+        _resolved = resolve_polish_contact(first_name)
+        greeting = _resolved["greeting"]
+        vocative = _resolved["first_name_vocative"] or first_name
+    except Exception:
+        gender_guess = "female" if first_name and first_name[-1].lower() == "a" else "male"
+        vocative = first_name
+        pan_pani = "Pani" if gender_guess == "female" else "Panie"
+        greeting = f"Dzień dobry {pan_pani} {vocative},"
 
     return f"""Jesteś ekspertem od komunikacji B2B i outreachu do firm produkcyjnych i FMCG w Polsce.
 
@@ -196,7 +211,8 @@ ZAKAZANE: zaczynanie od listy modułów, "nasze narzędzie", "nasza platforma", 
 
 ## DANE KONTAKTU
 
-Imię: {first_name}
+Imię (wołacz): {vocative}
+Powitanie: {greeting}
 Imię i nazwisko: {full_name}
 Stanowisko: {job_title}
 Firma: {company_name}
@@ -257,7 +273,7 @@ Każde CTA MUSI mieć 3 elementy (w tej kolejności):
 - Mail ma brzmieć jak napisany PO PRZECZYTANIU konkretnego artykułu — nie jak formalna analiza
 - Krótsze zdania, prostsze słownictwo, mniej technoKratyczny język
 - Każde zdanie konkretne dla tej firmy — bez ogólników
-- Powitanie OBOWIĄZKOWE: "Dzień dobry Panie {first_name}," (lub "Pani" dla kobiety)
+- Powitanie OBOWIĄZKOWE: zacznij dokładnie od "{greeting}" — użyj tej formy bez zmian
 - Po powitaniu — następny akapit od małej litery
 - NIGDY em dash "—" → zawsze zwykły myślnik " - "
 - Po kropce zawsze wielka litera
