@@ -267,45 +267,48 @@ def add_contact_to_list(contact_id: str, list_id: str) -> tuple[bool, str]:
     """
     Dodaje kontakt do listy Apollo (label).
 
-    Endpoint: POST /api/v1/labels/{list_id}/add_contact_ids
-    Payload:  { "contact_ids": ["<contact_id>"] }
+    Próbuje dwóch endpointów:
+    1. POST /api/v1/labels/{list_id}/add_contact_ids  (może zwrócić 404)
+    2. Fallback: PATCH /api/v1/contacts/{contact_id} z label_ids=[list_id]
 
     Returns:
         (True, "") jeśli sukces
         (False, diagnostic_message) jeśli błąd
     """
-    url = f"{APOLLO_BASE_URL}/labels/{list_id}/add_contact_ids"
-    payload = {"contact_ids": [contact_id]}
-
-    log.info(
-        "[LIST ADD] url=%s | list_id=%s | contact_id=%s",
-        url, list_id, contact_id,
-    )
-
+    # Primary: POST add_contact_ids
+    url_primary = f"{APOLLO_BASE_URL}/labels/{list_id}/add_contact_ids"
+    log.info("[LIST ADD] Próba primary: url=%s | contact_id=%s", url_primary, contact_id)
     try:
-        resp = requests.post(url, json=payload, headers=_headers(), timeout=30)
-        status_code = resp.status_code
+        resp = requests.post(url_primary, json={"contact_ids": [contact_id]}, headers=_headers(), timeout=30)
         try:
-            resp_body = resp.json()
-            resp_body_str = str(resp_body)[:400]
+            resp_body_str = str(resp.json())[:400]
         except Exception:
-            resp_body = None
             resp_body_str = resp.text[:400]
-
-        log.info(
-            "[LIST ADD] HTTP %d | list_id=%s contact_id=%s | response: %s",
-            status_code, list_id, contact_id, resp_body_str,
-        )
-
-        if not resp.ok:
-            diag = f"HTTP {status_code} | {resp_body_str}"
-            log.error("[LIST ADD] FAILED: contact_id=%s list_id=%s | %s", contact_id, list_id, diag)
-            return False, diag
-
-        log.info("[LIST ADD] OK: contact_id=%s list_id=%s", contact_id, list_id)
-        return True, ""
-
+        log.info("[LIST ADD] Primary HTTP %d | %s", resp.status_code, resp_body_str)
+        if resp.ok:
+            log.info("[LIST ADD] Primary OK: contact_id=%s list_id=%s", contact_id, list_id)
+            return True, ""
+        log.warning("[LIST ADD] Primary failed (HTTP %d) — próba fallback PATCH", resp.status_code)
     except requests.RequestException as exc:
-        diag = f"Request error: {exc}"
-        log.error("[LIST ADD] exception: contact_id=%s list_id=%s | %s", contact_id, list_id, diag)
+        log.warning("[LIST ADD] Primary request error: %s — próba fallback PATCH", exc)
+
+    # Fallback: PATCH /api/v1/contacts/{contact_id} with label_ids
+    url_fallback = f"{APOLLO_BASE_URL}/contacts/{contact_id}"
+    log.info("[LIST ADD] Fallback PATCH: url=%s | label_ids=[%s]", url_fallback, list_id)
+    try:
+        resp = requests.patch(url_fallback, json={"label_ids": [list_id]}, headers=_headers(), timeout=30)
+        try:
+            resp_body_str = str(resp.json())[:400]
+        except Exception:
+            resp_body_str = resp.text[:400]
+        log.info("[LIST ADD] Fallback HTTP %d | %s", resp.status_code, resp_body_str)
+        if resp.ok:
+            log.info("[LIST ADD] Fallback OK: contact_id=%s list_id=%s", contact_id, list_id)
+            return True, ""
+        diag = f"Primary+Fallback failed | HTTP {resp.status_code} | {resp_body_str}"
+        log.error("[LIST ADD] FAILED: contact_id=%s list_id=%s | %s", contact_id, list_id, diag)
+        return False, diag
+    except requests.RequestException as exc:
+        diag = f"Fallback request error: {exc}"
+        log.error("[LIST ADD] FAILED: contact_id=%s list_id=%s | %s", contact_id, list_id, diag)
         return False, diag
