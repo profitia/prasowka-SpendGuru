@@ -126,11 +126,20 @@ def run_auto(
 
     added, diag = add_contact_to_sequence(contact_id, sequence_id)
 
-    if added:
-        log.info(
-            "run_auto sukces: email=%s contact_id=%s sequence_id=%s list_added=%s",
-            email, contact_id, sequence_id, list_added,
-        )
+    # Apollo returns "already exists" when contact is already enrolled — treat as success
+    already_enrolled = not added and "already_exists_in_current_campaign" in (diag or "")
+
+    if added or already_enrolled:
+        if already_enrolled:
+            log.info(
+                "run_auto: kontakt już jest w sekwencji (already_exists) — traktujemy jako sukces: "
+                "email=%s contact_id=%s", email, contact_id,
+            )
+        else:
+            log.info(
+                "run_auto sukces: email=%s contact_id=%s sequence_id=%s list_added=%s",
+                email, contact_id, sequence_id, list_added,
+            )
         return {
             "ok": True,
             "contact_id": contact_id,
