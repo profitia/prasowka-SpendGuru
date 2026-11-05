@@ -170,9 +170,15 @@ function syncDbContactsToLocalStorage() {
       const dbEmail  = tier === 1 ? (article.tier1_email || '') : (article.tier2_email || '');
       const dbStatus = article.apollo_status || 'waiting';
       const existing = getContact(article.id, tier);
+      const draftKey = `prasowka_draft_${article.id}_t${tier}`;
+      // Retain previously local-only emails as explicit drafts before reconciling.
+      if (existing?.email && existing.email !== dbEmail && localStorage.getItem(draftKey) === null) {
+        localStorage.setItem(draftKey, existing.email);
+      }
+      if (localStorage.getItem(draftKey) === dbEmail) localStorage.removeItem(draftKey);
 
       // Overwrite localStorage with DB values (DB wins)
-      const email = dbEmail || existing?.email || '';
+      const email = dbEmail;
       saveContact(article.id, tier, article, email, dbStatus);
     });
   });
@@ -218,47 +224,81 @@ async function preloadCampaignHistory() {
   _refreshVisibleHistoryFlags();
 }
 
-async function loadArticles() {
-  let loaded = false;
+let apiRetryTimer;
+let loadGeneration = 0;
 
-  // 1. Try API
-  if (API_BASE_URL) {
-    try {
-      // Pobierz wszystkie rekordy łącznie z needs_review (nie rejected)
-      // aby umożliwić filtr jakości danych po stronie frontendu.
-      // Rekordy 'rejected' są pomijane przez _LOAD_SQL w backendzie.
-      const res = await fetch(`${API_BASE_URL}/api/articles?quality=ok,unknown,needs_review`);
-      if (res.ok) {
-        allArticles  = await res.json();
-        apiAvailable = true;
-        syncDbContactsToLocalStorage();
-        preloadCampaignHistory();  // fire-and-forget
-        loaded = true;
-      } else {
-        console.warn('[API] GET /api/articles zwrócił HTTP', res.status, '— fallback na JSON');
-      }
-    } catch (err) {
-      console.info('[API] Niedostępne, używam fallback data/articles.json:', err.message);
-    }
+async function apiFetch(path, options = {}, timeout = 20_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(`${API_BASE_URL}${path}`, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
+}
 
-  // 2. Fallback: static JSON
-  if (!loaded) {
+function apiState(message, retry = false) {
+  document.getElementById('apiStatus').textContent = message;
+  document.getElementById('retryApiBtn').hidden = !retry;
+}
+
+function canWrite() {
+  if (apiAvailable && API_BASE_URL) return true;
+  showToast('Brak połączenia z API. Zmiana nie została zapisana. Połącz ponownie.', 'error', 5000);
+  return false;
+}
+
+async function loadArticles(attempt = 0) {
+  const generation = ++loadGeneration;
+  clearTimeout(apiRetryTimer);
+  apiAvailable = false;
+  apiState('Łączę z API… Podczas uruchamiania serwera dostępny jest podgląd ostatniej publikacji.');
+
+  // Start waking the API while the static, public snapshot renders immediately.
+  const live = API_BASE_URL
+    ? apiFetch('/api/articles?quality=ok,unknown,needs_review', {}, 15_000)
+        .then(async res => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const articles = await res.json();
+          if (!Array.isArray(articles)) throw new Error('Nieprawidłowe dane API');
+          return articles;
+        }).then(articles => ({ articles }), error => ({ error }))
+    : Promise.resolve({ error: new Error('Brak adresu API') });
+
+  if (!allArticles.length) {
     try {
-      const res = await fetch('data/articles.json');
+      const res = await fetch('data/articles.json', { cache: 'no-cache', signal: AbortSignal.timeout(8000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      allArticles = await res.json();
-    } catch (err) {
-      document.getElementById('cards').innerHTML =
-        `<div class="empty-state"><p>Błąd ładowania artykułów: ${escHtml(err.message)}</p>
-         <p style="font-size:.8rem;opacity:.7">Upewnij się że serwer działa i plik data/articles.json istnieje.</p></div>`;
-      document.getElementById('resultsCount').textContent = 'Błąd';
-      return;
+      const articles = await res.json();
+      if (!Array.isArray(articles)) throw new Error('Nieprawidłowe dane publikacji');
+      if (generation !== loadGeneration) return;
+      allArticles = articles;
+      buildFilterOptions();
+      applyAndRender();
+    } catch {
+      // The API may still recover even if the snapshot cannot be downloaded.
     }
   }
 
-  buildFilterOptions();
-  applyAndRender();
+  const result = await live;
+  if (generation !== loadGeneration) return;
+  if (result.articles) {
+    allArticles = result.articles;
+    apiAvailable = true;
+    syncDbContactsToLocalStorage();
+    buildFilterOptions();
+    applyAndRender();
+    apiState('Połączono z API — aktualne dane z bazy.');
+    preloadCampaignHistory();
+  } else {
+    apiState('API jest niedostępne. Podgląd ostatniej publikacji; zmiany w bazie i kampanie są niedostępne.', true);
+    if (!allArticles.length) {
+      document.getElementById('cards').innerHTML = '<div class="empty-state"><p>Nie udało się pobrać artykułów. Użyj „Połącz ponownie”.</p></div>';
+      document.getElementById('resultsCount').textContent = 'Błąd połączenia';
+    }
+    // Retry reads only. Never automatically replay a write or a campaign.
+    if (API_BASE_URL && attempt < 3) apiRetryTimer = setTimeout(() => loadArticles(attempt + 1), 10_000);
+  }
 }
 
 // ============================================================
@@ -270,6 +310,8 @@ function buildFilterOptions() {
   const sources    = [...new Set(allArticles.map(a => a.source_name).filter(Boolean))].sort();
 
   const industryEl = document.getElementById('filterIndustry');
+  const industryValue = industryEl.value;
+  industryEl.length = 1;
   industries.forEach(v => {
     const opt = document.createElement('option');
     opt.value = v;
@@ -277,13 +319,17 @@ function buildFilterOptions() {
     industryEl.appendChild(opt);
   });
 
+  industryEl.value = industryValue;
   const sourceEl = document.getElementById('filterSource');
+  const sourceValue = sourceEl.value;
+  sourceEl.length = 1;
   sources.forEach(v => {
     const opt = document.createElement('option');
     opt.value = v;
     opt.textContent = v;
     sourceEl.appendChild(opt);
   });
+  sourceEl.value = sourceValue;
 }
 
 // ============================================================
@@ -519,6 +565,7 @@ function renderPersonBlock(article, tier) {
 
   const contact      = getContact(article.id, tier);
   const savedEmail   = contact?.email ?? '';
+  const draftEmail = localStorage.getItem(`prasowka_draft_${article.id}_t${tier}`);
   const apolloStatus = contact?.apollo_status ?? 'waiting';
   const isChecked    = apolloStatus === 'sent' ? 'checked' : '';
   const tierClass    = tier === 1 ? 'tier1' : 'tier2';
@@ -598,7 +645,7 @@ function renderPersonBlock(article, tier) {
             id="${inputId}"
             class="email-input"
             placeholder="Wpisz email osoby kontaktowej…"
-            value="${escAttr(savedEmail)}"
+            value="${escAttr(draftEmail ?? savedEmail)}"
             data-article-id="${escAttr(article.id)}"
             data-tier="${tier}"
             autocomplete="off"
@@ -607,7 +654,7 @@ function renderPersonBlock(article, tier) {
                   data-article-id="${escAttr(article.id)}"
                   data-tier="${tier}">Zapisz</button>
         </div>
-        <span class="save-confirm" id="save_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite"></span>
+        <span class="save-confirm" id="save_confirm_${escAttr(article.id)}_t${tier}" aria-live="polite">${draftEmail !== null ? 'Szkic — niezapisany w bazie' : ''}</span>
       </div>
       <div class="apollo-row">
         <label class="apollo-label">
@@ -735,7 +782,7 @@ function renderCard(article) {
 
 async function postToApi(path, body) {
   try {
-    const res = await fetch(`${API_BASE_URL}${path}`, {
+    const res = await apiFetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -761,7 +808,7 @@ async function fetchCampaignHistory(email) {
   if (!apiAvailable || !API_BASE_URL || !email || !email.includes('@')) return null;
   const key = email.trim().toLowerCase();
   try {
-    const res = await fetch(`${API_BASE_URL}/api/campaign-history?email=${encodeURIComponent(email)}`);
+    const res = await apiFetch(`/api/campaign-history?email=${encodeURIComponent(email)}`);
     if (!res.ok) return null;
     const data = await res.json();
     _historyCache[key] = data;
@@ -842,104 +889,56 @@ function handleHistoryFlagClick(e) {
   btn.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
 }
 
-function handleSaveEmail(e) {
+async function handleSaveEmail(e) {
   const btn = e.target.closest('.btn-save');
-  if (!btn) return;
-
-  const articleId = btn.dataset.articleId;
-  const tier      = parseInt(btn.dataset.tier, 10);
-  const article   = allArticles.find(a => a.id === articleId);
+  if (!btn || btn.disabled) return;
+  const { articleId } = btn.dataset;
+  const tier = Number(btn.dataset.tier);
+  const article = allArticles.find(a => a.id === articleId);
   if (!article) return;
-
-  const inputEl = document.getElementById(`email_${articleId}_t${tier}`);
-  const email   = inputEl?.value.trim() ?? '';
-
-  // Basic validation
-  if (email && !email.includes('@')) {
-    inputEl?.classList.add('input-error');
+  const input = document.getElementById(`email_${articleId}_t${tier}`);
+  const email = input.value.trim();
+  if (email && !email.includes('@')) { input.classList.add('input-error'); return; }
+  input.classList.remove('input-error');
+  const draftKey = `prasowka_draft_${articleId}_t${tier}`;
+  localStorage.setItem(draftKey, email);
+  const feedback = document.getElementById(`save_confirm_${articleId}_t${tier}`);
+  feedback.textContent = 'Szkic — niezapisany w bazie';
+  if (!canWrite()) return;
+  btn.disabled = true;
+  const result = await postToApi('/api/articles/contact', {
+    article_url: article.source_url, tier: TIER_VALUES[tier], email,
+  });
+  btn.disabled = false;
+  if (!result.ok) {
+    feedback.textContent = 'Brak potwierdzenia zapisu. Szkic zachowany; sprawdź połączenie i spróbuj ponownie.';
     return;
   }
-  inputEl?.classList.remove('input-error');
-
-  // Save to localStorage — preserve existing apollo_status
-  const existing = getContact(articleId, tier);
-  saveContact(articleId, tier, article, email, existing?.apollo_status ?? 'waiting');
-
-  // Refresh command block
-  const cmdEl = document.getElementById(`cmd_${articleId}_t${tier}`);
-  const existingContact = getContact(articleId, tier);
-  const currentStatus   = existingContact?.apollo_status ?? 'waiting';
-  if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tier, email, article, currentStatus);
-
-  // Confirmation element
-  const confirmEl = document.getElementById(`save_confirm_${articleId}_t${tier}`);
-
-  // POST to API (non-blocking)
-  if (apiAvailable && API_BASE_URL && article.source_url) {
-    const tierValue = TIER_VALUES[tier];
-    postToApi('/api/articles/contact', {
-      article_url: article.source_url,
-      tier: tierValue,
-      email,
-    }).then(({ ok }) => {
-      if (confirmEl) {
-        confirmEl.textContent = ok ? 'Zapisano w bazie ✔' : 'Zapisano lokalnie';
-        setTimeout(() => { confirmEl.textContent = ''; }, 2500);
-      }
-    });
-  } else {
-    if (confirmEl) {
-      confirmEl.textContent = 'Zapisano lokalnie';
-      setTimeout(() => { confirmEl.textContent = ''; }, 2500);
-    }
-  }
-
-  // Load/refresh campaign history for this email (non-blocking)
-  if (email && email.includes('@')) {
-    showHistoryForEmail(articleId, tier, email);
-  }
+  article[`tier${tier}_email`] = email;
+  saveContact(articleId, tier, article, email, result.data.apollo_status || article.apollo_status || 'waiting');
+  localStorage.removeItem(draftKey);
+  feedback.textContent = 'Zapisano w bazie ✔';
+  const cmd = document.getElementById(`cmd_${articleId}_t${tier}`);
+  if (cmd) cmd.innerHTML = renderCommandSection(articleId, tier, email, article, getApolloStatus(articleId, tier));
+  if (email) showHistoryForEmail(articleId, tier, email);
 }
 
-function handleApolloCheckbox(e) {
+async function handleApolloCheckbox(e) {
   const cb = e.target;
   if (!cb.classList.contains('apollo-checkbox')) return;
-
-  const articleId   = cb.dataset.articleId;
-  const tier        = parseInt(cb.dataset.tier, 10);
-  const article     = allArticles.find(a => a.id === articleId);
+  const { articleId } = cb.dataset;
+  const tier = Number(cb.dataset.tier);
+  const article = allArticles.find(a => a.id === articleId);
   if (!article) return;
-
-  const apolloStatus = cb.checked ? 'sent' : 'waiting';
-  const existing     = getContact(articleId, tier);
-  saveContact(articleId, tier, article, existing?.email ?? '', apolloStatus);
-
-  // Update badge
-  const badgeEl = document.getElementById(`status_badge_${articleId}_t${tier}`);
-  if (badgeEl) {
-    badgeEl.textContent = statusLabel(apolloStatus);
-    badgeEl.className   = `apollo-badge ${apolloStatus === 'sent' ? 'apollo-badge--sent' : 'apollo-badge--unsent'}`;
-  }
-
-  // Confirmation element
-  const confirmEl = document.getElementById(`apollo_confirm_${articleId}_t${tier}`);
-
-  // POST to API (non-blocking)
-  if (apiAvailable && API_BASE_URL && article.source_url) {
-    postToApi('/api/articles/status', {
-      article_url:   article.source_url,
-      apollo_status: apolloStatus,
-    }).then(({ ok }) => {
-      if (confirmEl) {
-        confirmEl.textContent = ok ? 'Zapisano w bazie ✔' : 'Status zaktualizowany';
-        setTimeout(() => { confirmEl.textContent = ''; }, 2500);
-      }
-    });
-  } else {
-    if (confirmEl) {
-      confirmEl.textContent = 'Status zaktualizowany';
-      setTimeout(() => { confirmEl.textContent = ''; }, 2500);
-    }
-  }
+  const previous = getApolloStatus(articleId, tier);
+  const next = cb.checked ? 'sent' : 'waiting';
+  cb.checked = previous === 'sent';
+  if (!canWrite()) return;
+  const result = await postToApi('/api/articles/status', { article_url: article.source_url, apollo_status: next });
+  if (!result.ok) { showToast('Brak potwierdzenia zapisu statusu. Sprawdź aktualne dane przed ponowną próbą.', 'error', 5000); return; }
+  article.apollo_status = next;
+  [1, 2].forEach(t => saveContact(articleId, t, article, getContactEmail(articleId, t), next));
+  applyAndRender();
 }
 
 function handleCmdToggle(e) {
@@ -1065,6 +1064,7 @@ async function handleRunApollo(e) {
   const btn = e.target.closest('.btn-run-apollo');
   if (!btn || btn.disabled) return;
 
+  if (!canWrite()) return;
   const articleId = btn.dataset.articleId;
   const tier      = parseInt(btn.dataset.tier, 10);
   const lockKey   = `${articleId}_t${tier}`;
@@ -1123,19 +1123,17 @@ async function handleRunApollo(e) {
   let result = { ok: false, message: 'Błąd połączenia z API' };
 
   try {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 210_000); // 210 s > backend 180 s
-    const res = await fetch(`${API_BASE_URL}/api/apollo/run-auto`, {
+    const res = await apiFetch('/api/apollo/run-auto', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(body),
-      signal:  controller.signal,
-    });
-    clearTimeout(tid);
-    result = await res.json().catch(() => ({ ok: false, message: `HTTP ${res.status}` }));
+    }, 210_000);
+    result = await res.json().catch(() => ({ ok: false, uncertain: true, message: `HTTP ${res.status}` }));
+    if (!res.ok) result.ok = false;
   } catch (err) {
     result = {
       ok:      false,
+      uncertain: true,
       message: err.name === 'AbortError' ? 'Timeout — pipeline trwał za długo' : `Błąd połączenia: ${err.message}`,
     };
   }
@@ -1163,17 +1161,17 @@ async function handleRunApollo(e) {
     }
   } else {
     // Revert do poprzedniego statusu (waiting lub sent)
-    const revertStatus = prevStatus === 'sent' ? 'sent' : 'waiting';
+    const revertStatus = result.uncertain ? 'running' : (prevStatus === 'sent' ? 'sent' : 'waiting');
     saveContact(articleId, tier, article, contact.email, revertStatus);
     const cmdElErr = document.getElementById(`cmd_${articleId}_t${tier}`);
     if (cmdElErr) cmdElErr.innerHTML = renderCommandSection(articleId, tier, contact.email, article, revertStatus);
     const badgeElErr = document.getElementById(`status_badge_${articleId}_t${tier}`);
     if (badgeElErr) {
       badgeElErr.textContent = statusLabel(revertStatus);
-      badgeElErr.className   = `apollo-badge apollo-badge--${revertStatus === 'sent' ? 'sent' : 'unsent'}`;
+      badgeElErr.className   = `apollo-badge apollo-badge--${revertStatus === 'sent' ? 'sent' : revertStatus === 'running' ? 'running' : 'unsent'}`;
     }
     const errorMsg = result.message || 'Nie udało się uruchomić kampanii Apollo. Status przywrócony.';
-    showToast('Nie udało się uruchomić kampanii Apollo', 'error', 6000);
+    showToast(result.uncertain ? 'Brak potwierdzenia wyniku kampanii. Sprawdź historię przed ponownym uruchomieniem.' : 'Nie udało się uruchomić kampanii Apollo', 'error', 8000);
     console.error('[Apollo runner] błąd:', errorMsg);
     if (confirmEl) {
       confirmEl.textContent = errorMsg;
@@ -1304,7 +1302,7 @@ async function handleRunPipeline() {
   icon.innerHTML  = '<animateTransform attributeName="transform" type="rotate" from="0 10 10" to="360 10 10" dur="1s" repeatCount="indefinite"/><circle cx="10" cy="10" r="7" stroke-dasharray="22 22" stroke-linecap="round"/>';
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/pipeline/trigger`, {
+    const res = await apiFetch('/api/pipeline/trigger', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -1336,7 +1334,7 @@ function _startPipelineStatusPolling() {
   _pipelineStatusInterval = setInterval(async () => {
     attempts++;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/pipeline/status`);
+      const res = await apiFetch('/api/pipeline/status');
       if (!res.ok) return;
       const data = await res.json();
       const run  = data.last_run;
@@ -1405,7 +1403,7 @@ async function handleAddArticle() {
   statusEl.className     = 'add-article-status add-article-status--info';
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/articles/add`, {
+    const res = await apiFetch('/api/articles/add', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ url }),
@@ -1489,7 +1487,7 @@ async function handleRejectArticle(e) {
   btn.disabled = true;
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/articles/reject`, {
+    const res = await apiFetch('/api/articles/reject', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ article_url: articleUrl }),
@@ -1542,6 +1540,8 @@ function handleEditField(e) {
 
   const wrap = inputEl.closest('.field-inline-row');
   if (!wrap) return;
+
+  if (!canWrite()) return;
 
   // Store original value for cancel
   inputEl.dataset.origValue = inputEl.value;
@@ -1599,10 +1599,22 @@ async function handleOkField(e) {
   // Normalise displayed value
   inputEl.value = newValue;
 
-  // Update local article object
-  if (field === 'company')  article.company = newValue;
-  if (field === 'person')   { if (tier === '1') article.tier1_person = newValue; else article.tier2_person = newValue; }
-  if (field === 'position') { if (tier === '1') article.tier1_position = newValue; else article.tier2_position = newValue; }
+  const updated = { ...article };
+  if (field === 'company') updated.company = newValue;
+  if (field === 'person') updated[`tier${tier}_person`] = newValue;
+  if (field === 'position') updated[`tier${tier}_position`] = newValue;
+  const result = canWrite() ? await postToApi('/api/articles/fields', {
+    article_url: article.source_url, company: updated.company || '',
+    tier1_person: updated.tier1_person || '', tier1_position: updated.tier1_position || '',
+    tier2_person: updated.tier2_person || '', tier2_position: updated.tier2_position || '',
+  }) : { ok: false };
+  if (!result.ok) {
+    okBtn.disabled = false;
+    okBtn.textContent = 'OK';
+    if (confirmEl) confirmEl.textContent = 'Brak potwierdzenia zapisu — poprawka pozostaje w polu. Spróbuj ponownie po połączeniu.';
+    return;
+  }
+  Object.assign(article, updated);
 
   // If person name/position changed → rebuild command block
   if ((field === 'person' || field === 'position') && tier) {
@@ -1613,21 +1625,6 @@ async function handleOkField(e) {
     const cmdEl   = document.getElementById(`cmd_${articleId}_t${tier}`);
     if (cmdEl) cmdEl.innerHTML = renderCommandSection(articleId, tierNum, email, article, status);
     if (contact) saveContact(articleId, tierNum, article, email, status);
-  }
-
-  // Persist to API and show feedback
-  let savedOk = false;
-  if (apiAvailable && API_BASE_URL && article.source_url) {
-    const res = await postToApi('/api/articles/fields', {
-      article_url:    article.source_url,
-      company:        article.company        ?? '',
-      tier1_person:   article.tier1_person   ?? '',
-      tier1_position: article.tier1_position ?? '',
-      tier2_person:   article.tier2_person   ?? '',
-      tier2_position: article.tier2_position ?? '',
-    });
-    savedOk = res.ok;
-    if (!res.ok) showToast('Nie udało się zapisać w bazie — dane zaktualizowane lokalnie.', 'error', 4000);
   }
 
   // Return to read-only
@@ -1641,17 +1638,11 @@ async function handleOkField(e) {
     wrap.querySelector('.btn-cancel-field').hidden = true;
   }
 
-  // Confirmation message
   if (confirmEl) {
-    if (apiAvailable && API_BASE_URL) {
-      confirmEl.textContent = savedOk ? 'Zapisano ✔' : 'Zapisano lokalnie (błąd bazy)';
-      confirmEl.className   = `field-save-confirm ${savedOk ? 'field-save-confirm--ok' : 'field-save-confirm--err'}`;
-    } else {
-      confirmEl.textContent = 'Zapisano lokalnie';
-      confirmEl.className   = 'field-save-confirm field-save-confirm--ok';
-    }
-    setTimeout(() => { confirmEl.textContent = ''; confirmEl.className = 'field-save-confirm'; }, 3000);
+    confirmEl.textContent = 'Zapisano w bazie ✔';
+    confirmEl.className = 'field-save-confirm field-save-confirm--ok';
   }
+
 }
 
 // ============================================================
@@ -1667,7 +1658,16 @@ async function handleAcceptArticle(e) {
   const article    = allArticles.find(a => a.id === articleId);
   if (!article) return;
 
-  // Update local state immediately
+  if (!canWrite()) return;
+  btn.disabled = true;
+  const result = await postToApi('/api/articles/accept', { article_url: articleUrl });
+  if (!result.ok) {
+    btn.disabled = false;
+    showToast('Brak potwierdzenia akceptacji w bazie. Spróbuj ponownie po połączeniu.', 'error', 5000);
+    return;
+  }
+
+  // Update the visible state only after the database confirmed the change.
   article.data_quality_status = 'ok';
 
   // Update button → accepted state
@@ -1683,15 +1683,7 @@ async function handleAcceptArticle(e) {
     if (badge) badge.remove();
   }
 
-  // Persist to API
-  if (apiAvailable && API_BASE_URL && articleUrl) {
-    const res = await postToApi('/api/articles/accept', { article_url: articleUrl });
-    if (res.ok) {
-      showToast('Artykuł zaakceptowany ✔', 'success', 3000);
-    } else {
-      showToast('Nie udało się zapisać w bazie — zaakceptowano lokalnie.', 'error', 4000);
-    }
-  }
+  showToast('Artykuł zaakceptowany ✔', 'success', 3000);
 }
 
 // ============================================================
@@ -1701,6 +1693,7 @@ async function handleAcceptArticle(e) {
 document.addEventListener('DOMContentLoaded', () => {
   initDarkMode();
   loadArticles();
+  document.getElementById('retryApiBtn').addEventListener('click', () => loadArticles());
 
   // Dark mode toggle
   document.getElementById('darkToggle')
@@ -1743,6 +1736,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const cardsEl = document.getElementById('cards');
   cardsEl.addEventListener('click',  e => { handleSaveEmail(e); handleCopyClick(e); handleCmdToggle(e); handleRunApollo(e); handleHistoryFlagClick(e); handleRejectArticle(e); handleEditField(e); handleCancelField(e); handleOkField(e); handleAcceptArticle(e); });
   cardsEl.addEventListener('change', handleApolloCheckbox);
+  cardsEl.addEventListener('input', e => {
+    if (e.target.classList.contains('email-input')) {
+      const { articleId, tier } = e.target.dataset;
+      localStorage.setItem(`prasowka_draft_${articleId}_t${tier}`, e.target.value);
+    }
+  });
 
   // Add article by URL
   document.getElementById('addArticleBtn')

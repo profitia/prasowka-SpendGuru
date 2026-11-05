@@ -42,6 +42,7 @@ if str(_src) not in sys.path:
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, field_validator
 
 from news.press_db import (
@@ -308,6 +309,12 @@ class AcceptArticleRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@app.get("/", include_in_schema=False)
+async def frontend() -> RedirectResponse:
+    """Send people opening the API address to the existing Pages frontend."""
+    return RedirectResponse("https://profitia.github.io/prasowka-SpendGuru/", status_code=307)
+
+
 @app.get("/health")
 async def health() -> dict:
     """Health check."""

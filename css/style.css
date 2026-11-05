@@ -1453,3 +1453,6 @@ a:hover { text-decoration: underline; }
   .layout { display: block; }
   .card { page-break-inside: avoid; box-shadow: none; border: 1px solid #ccc; }
 }
+
+.api-state { padding-block: .75rem; font-size: .875rem; }
+.api-state button { margin-left: .75rem; }
