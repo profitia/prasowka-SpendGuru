@@ -42,6 +42,25 @@ Zasady eksportu:
 python src/news/orchestrator.py run --brief food_press --dry-run --dry-run-export-preview-json --verbose
 ```
 
+### Adres aplikacji i dostępność API
+
+Interfejs: **https://profitia.github.io/prasowka-SpendGuru/**.
+Render (`https://prasowka-spendguru.onrender.com`) obsługuje wyłącznie API;
+wejście na `/` przekierowuje do GitHub Pages.
+
+Podczas uruchamiania API strona pokazuje ostatnią publikację artykułów i stan
+połączenia. Odczyt API ma limit czasu i automatyczne ponowienia; przycisk
+„Połącz ponownie” pozwala ponowić odczyt ręcznie. Operacje zapisu ani kampanie
+nie są automatycznie ponawiane. Potwierdzenie zapisu oznacza odpowiedź API;
+niezapisany email pozostaje lokalnym szkicem, także po odświeżeniu strony.
+
+Testy bez produkcyjnej bazy i bez wysyłek:
+
+```bash
+node --test scripts/test_frontend_recovery.cjs
+python scripts/test_api_recovery.py  # wymaga fastapi i httpx
+```
+
 ### Deploy na GitHub Pages
 
 ```bash

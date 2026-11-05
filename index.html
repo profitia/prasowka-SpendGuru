@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prasówka SpendGuru</title>
-  <link rel="stylesheet" href="css/style.css?v=2">
+  <link rel="stylesheet" href="css/style.css?v=3">
 </head>
 <body>
 
@@ -58,6 +58,11 @@
         </button>
       </div>
     </div>
+  </div>
+
+  <div class="container api-state" role="status" aria-live="polite">
+    <span id="apiStatus">Łączę z API…</span>
+    <button id="retryApiBtn" class="btn-text" hidden>Połącz ponownie</button>
   </div>
 
   <!-- ========== ADD ARTICLE BAR ========== -->
@@ -191,6 +196,6 @@
   <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="false"></div>
 
   <script src="js/config.js"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="js/app.js?v=5"></script>
 </body>
 </html>
